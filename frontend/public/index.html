@@ -82,31 +82,32 @@
   <aside class="sidebar">
     <h1>🎬 AutoCut</h1>
     <div style="display:flex;gap:.3rem;margin-bottom:.3rem;align-items:center">
-      <label style="font-size:.75rem;color:var(--muted);flex:1">활성 프로젝트</label>
-      <button class="sm" @click="showSettings=true" title="설정">⚙</button>
+      <label style="font-size:.75rem;color:var(--muted);flex:1">{{ t.activeProject }}</label>
+      <button class="sm" @click="toggleLang" :title="t.langToggle">{{ lang.toUpperCase() }}</button>
+      <button class="sm" @click="showSettings=true" :title="t.settings">⚙</button>
     </div>
     <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.3rem">
-      <option value="" disabled>프로젝트 선택</option>
+      <option value="" disabled>{{ t.selectProject }}</option>
       <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
     </select>
     <div style="display:flex;gap:.2rem;margin-bottom:.5rem">
-      <button class="sm" style="flex:1" @click="newProject" title="새 프로젝트">＋</button>
-      <button class="sm" style="flex:1" @click="renameActiveProject" :disabled="!activeProject" title="이름 변경">✏</button>
-      <button class="sm danger" style="flex:1" @click="archiveActiveProject" :disabled="!activeProject" title="아카이브로 이동">🗄</button>
+      <button class="sm" style="flex:1" @click="newProject" :title="t.newProject">＋</button>
+      <button class="sm" style="flex:1" @click="renameActiveProject" :disabled="!activeProject" :title="t.rename">✏</button>
+      <button class="sm danger" style="flex:1" @click="archiveActiveProject" :disabled="!activeProject" :title="t.archive">🗄</button>
     </div>
     <button class="sm" style="width:100%; margin-bottom:.75rem" @click="batchTranscribe" :disabled="pendingCount===0">
-      🎬 미추출 전체 자막 추출 ({{ pendingCount }})
+      🎬 {{ t.batchTranscribe }} ({{ pendingCount }})
     </button>
 
-    <h2>파일 트리</h2>
+    <h2>{{ t.files }}</h2>
     <div v-if="tree && tree.children?.length" style="margin: 0 -.4rem; font-size:.85rem">
       <tree-node v-for="c in tree.children" :key="c.path" :node="c" :selected="selected"
                  :expanded-paths="expandedPaths" @select="selectFile" @toggle="toggleExpand"
                  @rename="renameItem"></tree-node>
     </div>
-    <p v-else class="empty">프로젝트를 선택하세요</p>
+    <p v-else class="empty">{{ t.pickProject }}</p>
 
-    <h2>작업 ({{ activeJobs.length }})</h2>
+    <h2>{{ t.jobs }} ({{ activeJobs.length }})</h2>
     <div v-for="j in activeJobs" :key="j.id" class="job-item" @click="viewJobLog(j)" style="cursor:pointer">
       <div style="display:flex;justify-content:space-between">
         <span>{{ jobEmoji(j) }} {{ j.type }}</span>
@@ -122,17 +123,17 @@
   <main class="main">
     <div v-if="!selected" class="empty" style="padding: 4rem 0">
       <p style="font-size: 3rem">🎬</p>
-      <p>왼쪽에서 파일을 선택하거나 업로드하세요</p>
+      <p>{{ t.pickFile }}</p>
     </div>
 
     <div v-else>
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h3>{{ selected.name }}</h3>
-        <button class="danger sm" @click="deleteFile(selected.name)">삭제</button>
+        <button class="danger sm" @click="deleteFile(selected.name)">{{ t.delete }}</button>
       </div>
 
       <div style="margin-bottom: 1rem">
-        <div class="video-label">원본</div>
+        <div class="video-label">{{ t.source }}</div>
         <div class="video-box">
           <video controls ref="videoEl" crossorigin="anonymous" :key="selected.name">
             <source :src="`/api/media/${encodePath(selected.name)}`">
@@ -145,7 +146,7 @@
       </div>
 
       <div v-if="outputList.length" style="margin-bottom: 1rem">
-        <div class="video-label result">편집본 ({{ outputList.length }})</div>
+        <div class="video-label result">{{ t.outputs }} ({{ outputList.length }})</div>
         <div class="output-grid">
           <div v-for="o in outputList" :key="o.name" class="output-card">
             <div class="video-box">
@@ -191,7 +192,7 @@
             <option value="Japanese">日本語</option>
             <option value="zh">中文</option>
           </select></label>
-          <button class="primary" @click="startTranscribe">🎤 자막 추출</button>
+          <button class="primary" @click="startTranscribe">🎤 {{ t.transcribe }}</button>
         </div>
       </div>
 
@@ -205,16 +206,16 @@
           <span class="stat-chip">{{ keptCount }} 유지 / {{ cutCount }} 제거</span>
           <span class="stat-chip">{{ formatDuration(keptDuration) }} / {{ formatDuration(subtitle.totalDuration) }}</span>
           <span style="flex:1"></span>
-          <button class="sm" @click="selectAll(true)">모두 유지</button>
-          <button class="sm" @click="selectAll(false)">모두 제거</button>
-          <button class="sm" @click="invertSelection">반전</button>
-          <button class="sm" @click="previewCut" :disabled="keptCount===0" title="유지 라인만 순차 재생">▶ 프리뷰</button>
-          <button class="sm" @click="reTranscribe" title="이전 버전은 자동 아카이브">🔄 재추출</button>
-          <button class="sm" @click="toggleVersions">📚 버전</button>
+          <button class="sm" @click="selectAll(true)">{{ t.keepAll }}</button>
+          <button class="sm" @click="selectAll(false)">{{ t.removeAll }}</button>
+          <button class="sm" @click="invertSelection">{{ t.invert }}</button>
+          <button class="sm" @click="previewCut" :disabled="keptCount===0" :title="t.previewTip">▶ {{ t.preview }}</button>
+          <button class="sm" @click="reTranscribe" :title="t.reTranscribeTip">🔄 {{ t.reTranscribe }}</button>
+          <button class="sm" @click="toggleVersions">📚 {{ t.versions }}</button>
           <a class="button-link sm" :href="`/api/media/${encodePath(srtName)}`" :download="srtName" v-if="srtName">⬇ SRT</a>
           <a class="button-link sm" :href="`/api/vtt/${encodePath(selected.name)}`" :download="vttName" v-if="subtitle?.hasSrt">⬇ VTT</a>
-          <input v-model="cutLabel" placeholder="라벨 (선택)" style="width:120px; padding:.3rem .5rem; font-size:.8rem">
-          <button class="primary" @click="startCut" :disabled="keptCount===0">✂️ 컷 편집</button>
+          <input v-model="cutLabel" :placeholder="t.labelOpt" style="width:120px; padding:.3rem .5rem; font-size:.8rem">
+          <button class="primary" @click="startCut" :disabled="keptCount===0">✂️ {{ t.cut }}</button>
         </div>
         <div v-if="showVersions && versions.length" class="subtitle-list" style="margin-bottom:.5rem">
           <div v-for="v in versions" :key="v.tag" class="subtitle-item" style="grid-template-columns: auto 1fr auto auto">
@@ -265,35 +266,35 @@
   <div v-if="showSettings" class="modal-overlay" @click.self="showSettings=false">
     <div class="modal" style="max-width:480px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-        <h3>⚙ 설정</h3>
-        <button class="sm" @click="showSettings=false">닫기</button>
+        <h3>⚙ {{ t.settings }}</h3>
+        <button class="sm" @click="showSettings=false">{{ t.close }}</button>
       </div>
-      <div style="display:grid; grid-template-columns: 120px 1fr; gap:.75rem; align-items:center">
-        <label>기본 엔진</label>
+      <div style="display:grid; grid-template-columns: 130px 1fr; gap:.75rem; align-items:center">
+        <label>{{ t.defaultEngine }}</label>
         <select v-model="settings.defaultEngine">
           <option value="qwen3">Qwen3-ASR-1.7B (GPU)</option>
           <option value="whisper">Whisper (CPU)</option>
         </select>
-        <label>기본 언어</label>
+        <label>{{ t.defaultLang }}</label>
         <select v-model="settings.defaultLang">
           <option value="Korean">한국어</option>
           <option value="English">English</option>
           <option value="Japanese">日本語</option>
           <option value="zh">中文</option>
         </select>
-        <label>Whisper 모델</label>
+        <label>{{ t.whisperModel }}</label>
         <select v-model="settings.defaultWhisperModel">
           <option>tiny</option><option>base</option><option>small</option>
           <option>medium</option><option>large-v3-turbo</option><option>large-v3</option>
         </select>
-        <label>Qwen3 디바이스</label>
+        <label>{{ t.qwen3Device }}</label>
         <select v-model="settings.qwen3Device">
           <option>cuda:0</option><option>cuda:1</option><option>cpu</option>
         </select>
       </div>
       <div style="margin-top:1.5rem; display:flex; gap:.5rem; justify-content:flex-end">
-        <button class="sm" @click="showSettings=false">취소</button>
-        <button class="primary sm" @click="saveSettings">저장</button>
+        <button class="sm" @click="showSettings=false">{{ t.cancel }}</button>
+        <button class="primary sm" @click="saveSettings">{{ t.save }}</button>
       </div>
     </div>
   </div>
@@ -392,6 +393,45 @@ createApp({
     const subtitleVersion = ref(Date.now())  // 자막 변경 시 video <track> 캐시 버스팅
     const tree = ref(null)
     const expandedPaths = reactive(new Set())
+
+    const I18N = {
+      ko: {
+        activeProject: "활성 프로젝트", selectProject: "프로젝트 선택",
+        newProject: "새 프로젝트", rename: "이름 변경", archive: "아카이브로 이동",
+        batchTranscribe: "미추출 전체 자막 추출", files: "파일 트리",
+        pickProject: "프로젝트를 선택하세요", pickFile: "왼쪽에서 파일을 선택하거나 업로드하세요",
+        jobs: "작업", settings: "설정", close: "닫기", cancel: "취소", save: "저장",
+        delete: "삭제", source: "원본", outputs: "편집본",
+        transcribe: "자막 추출", reTranscribe: "재추출", reTranscribeTip: "이전 버전은 자동 아카이브",
+        cut: "컷 편집", preview: "프리뷰", previewTip: "유지 라인만 순차 재생",
+        keepAll: "모두 유지", removeAll: "모두 제거", invert: "반전", versions: "버전",
+        labelOpt: "라벨 (선택)",
+        defaultEngine: "기본 엔진", defaultLang: "기본 언어",
+        whisperModel: "Whisper 모델", qwen3Device: "Qwen3 디바이스",
+        langToggle: "언어 전환 (KO/EN)",
+      },
+      en: {
+        activeProject: "Active project", selectProject: "Select project",
+        newProject: "New project", rename: "Rename", archive: "Archive",
+        batchTranscribe: "Transcribe all pending", files: "Files",
+        pickProject: "Pick a project", pickFile: "Select or upload a file from the sidebar",
+        jobs: "Jobs", settings: "Settings", close: "Close", cancel: "Cancel", save: "Save",
+        delete: "Delete", source: "Source", outputs: "Outputs",
+        transcribe: "Transcribe", reTranscribe: "Re-transcribe", reTranscribeTip: "Previous version auto-archived",
+        cut: "Cut", preview: "Preview", previewTip: "Play kept lines in sequence",
+        keepAll: "Keep all", removeAll: "Remove all", invert: "Invert", versions: "Versions",
+        labelOpt: "Label (optional)",
+        defaultEngine: "Default engine", defaultLang: "Default language",
+        whisperModel: "Whisper model", qwen3Device: "Qwen3 device",
+        langToggle: "Toggle language (KO/EN)",
+      },
+    }
+    const lang = ref(localStorage.getItem("autocut_lang") || "ko")
+    const t = computed(() => I18N[lang.value] || I18N.ko)
+    function toggleLang() {
+      lang.value = lang.value === "ko" ? "en" : "ko"
+      localStorage.setItem("autocut_lang", lang.value)
+    }
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
     function setEditInput(el) { if (el) editInput.value = el }
 
@@ -771,6 +811,7 @@ createApp({
       jobLogOpen, jobLogText, viewJobLog, subtitleVersion,
       tree, expandedPaths, loadTree, toggleExpand,
       newProject, renameActiveProject, archiveActiveProject, renameItem,
+      lang, t, toggleLang,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }

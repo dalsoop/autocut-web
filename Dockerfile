@@ -1,26 +1,31 @@
-# autocut-web + Qwen3-ASR (GPU 필수) — Envato 배포용
-# nvidia/cuda base로 cuDNN 포함
+# autocut-web + Qwen3-ASR (GPU 필수) — Python 3.13 + CUDA 12.4
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/models
 
-# 시스템 의존성
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv python3-pip python3-dev \
-      ffmpeg git curl ca-certificates build-essential \
-      nodejs npm \
+# Python 3.13 (deadsnakes PPA) + Node 20 (NodeSource) + 시스템 의존성
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common curl gnupg ca-certificates \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.13 python3.13-venv python3.13-dev \
+        ffmpeg git build-essential \
+        nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Python 가상환경 + autocut + Qwen3-ASR
-RUN python3 -m venv /opt/venv
+# Python venv
+RUN python3.13 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir \
-      torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# PyTorch cu124 (Python 3.13 wheel)
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# ASR + 컷 의존성 (Python 3.13이면 audioop-lts 필요)
 RUN pip install --no-cache-dir \
       qwen-asr \
       audioop-lts packaging silero-vad "moviepy<2" \
