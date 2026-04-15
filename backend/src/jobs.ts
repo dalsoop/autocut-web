@@ -210,6 +210,9 @@ export async function listTree(): Promise<any> {
     // 파일
     const low = abs.toLowerCase()
     if (!VIDEO_EXT.test(low) && !AUDIO_EXT.test(low)) return null
+    // 편집본은 트리에서 제외 (편집본 카드에 별도 노출)
+    const fn = path.basename(abs)
+    if (fn.includes("_cut_") || fn.endsWith("_cut.mp4")) return null
     const base = abs.replace(/\.[^.]+$/, "")
     const hasSubtitle = await fs.access(base + ".srt").then(() => true).catch(() => false)
     const dir = path.dirname(abs)
