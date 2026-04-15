@@ -224,7 +224,7 @@
             <input type="checkbox" v-model="l.kept">
             <span class="time" @click="seek(l.start)" style="cursor:pointer">{{ formatTime(l.start) }}</span>
             <span v-if="editingIndex !== l.index" @dblclick="startEdit(l)" style="cursor:text">{{ l.text }}</span>
-            <input v-else v-model="editingText" @keyup.enter="saveEdit(l)" @keyup.esc="editingIndex=null" @blur="saveEdit(l)" :ref="el => { if (el) editInput.value = el }">
+            <input v-else v-model="editingText" @keyup.enter="saveEdit(l)" @keyup.esc="editingIndex=null" @blur="saveEdit(l)" :ref="setEditInput">
             <span class="dur">{{ l.duration.toFixed(1) }}s</span>
             <span style="display:flex; gap:.15rem">
               <button class="sm" @click="nudge(l, -0.1, 0)" title="시작 -0.1초" style="padding:.1rem .25rem">◄]</button>
@@ -347,6 +347,7 @@ createApp({
     const jobLogOpen = ref(null)
     const jobLogText = ref("")
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
+    function setEditInput(el) { if (el) editInput.value = el }
 
     const activeJobs = computed(() =>
       jobs.value.filter(j => j.status === "running" || j.status === "queued" ||
@@ -662,7 +663,7 @@ createApp({
       batchTranscribe, previewCut, pendingCount,
       versions, showVersions, toggleVersions, activateVersion,
       cutLabel, srtName, vttName,
-      editingIndex, editingText, editInput, startEdit, saveEdit,
+      editingIndex, editingText, editInput, setEditInput, startEdit, saveEdit,
       splitAt, mergeWithNext, nudge, searchTerm, filteredLines,
       jobLogOpen, jobLogText, viewJobLog,
       loadSynology, clickSynology, importFile,
