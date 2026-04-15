@@ -35,8 +35,12 @@
   .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; }
   .file-badge { font-size: .7rem; color: var(--muted); padding: .1rem .35rem; border-radius: 3px; background: var(--border); }
   .file-badge.ok { background: var(--ok); color: white; }
-  .video-box { background: black; border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
-  .video-box video { width: 100%; display: block; max-height: 400px; }
+  .video-box { background: black; border-radius: 8px; overflow: hidden; }
+  .video-box video { width: 100%; display: block; max-height: 360px; }
+  .video-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: 1rem; }
+  .video-grid.single { grid-template-columns: 1fr; }
+  .video-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .35rem; font-weight: 600; }
+  .video-label.result { color: var(--ok); }
   .subtitle-list { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .subtitle-item { display: grid; grid-template-columns: 32px 70px auto 1fr; gap: .5rem; padding: .6rem .75rem; border-bottom: 1px solid var(--border); align-items: center; transition: background .1s; }
   .subtitle-item:last-child { border-bottom: 0; }
@@ -92,13 +96,6 @@
     </div>
     <p v-else class="empty">없음</p>
 
-    <h2>결과 ({{ files.output.length }})</h2>
-    <div v-for="f in files.output" :key="f.name" class="file-item" style="margin: 0 -.4rem;">
-      <span>📤</span>
-      <a :href="`/api/output/${encodeURIComponent(f.name)}`" :download="f.name" class="file-name">{{ f.name }}</a>
-      <span class="muted">{{ formatSize(f.size) }}</span>
-    </div>
-
     <h2>작업 ({{ activeJobs.length }})</h2>
     <div v-for="j in activeJobs" :key="j.id" class="job-item">
       <div style="display:flex;justify-content:space-between">
@@ -124,8 +121,19 @@
         <button class="danger sm" @click="deleteFile(selected.name)">삭제</button>
       </div>
 
-      <div class="video-box">
-        <video :src="`/api/input/${encodeURIComponent(selected.name)}`" controls ref="videoEl"></video>
+      <div class="video-grid" :class="{ single: !outputName }">
+        <div>
+          <div class="video-label">원본</div>
+          <div class="video-box">
+            <video :src="`/api/input/${encodeURIComponent(selected.name)}`" controls ref="videoEl"></video>
+          </div>
+        </div>
+        <div v-if="outputName">
+          <div class="video-label result">편집본 · <a :href="`/api/output/${encodeURIComponent(outputName)}`" :download="outputName">다운로드</a></div>
+          <div class="video-box">
+            <video :src="`/api/output/${encodeURIComponent(outputName)}`" controls></video>
+          </div>
+        </div>
       </div>
 
       <div v-if="!subtitle?.hasSrt">
@@ -220,6 +228,13 @@ createApp({
     const keptDuration = computed(() =>
       subtitle.value?.lines.filter(l => l.kept).reduce((s, l) => s + l.duration, 0) || 0
     )
+    const outputName = computed(() => {
+      if (!selected.value) return null
+      const base = selected.value.name.replace(/\.[^.]+$/, "")
+      const candidates = [`${base}_cut.mp4`, `${base}_cut.mp3`]
+      const hit = files.output.find(f => candidates.includes(f.name))
+      return hit?.name || null
+    })
 
     async function loadFiles() {
       const r = await fetch("/api/files").then(r => r.json()).catch(() => null)
@@ -324,7 +339,7 @@ createApp({
     return {
       files, activeJobs, selected, subtitle, isDragging, transcribeOpts,
       showSynology, synPath, synEntries, videoEl, fileInput,
-      keptCount, cutCount, keptDuration,
+      keptCount, cutCount, keptDuration, outputName,
       selectFile, deleteFile, seek, selectAll, invertSelection,
       onFileSelect, onDrop, startTranscribe, startCut,
       loadSynology, clickSynology, importFile,
