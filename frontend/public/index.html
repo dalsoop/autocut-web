@@ -224,7 +224,7 @@
             <input type="checkbox" v-model="l.kept">
             <span class="time" @click="seek(l.start)" style="cursor:pointer">{{ formatTime(l.start) }}</span>
             <span v-if="editingIndex !== l.index" @dblclick="startEdit(l)" style="cursor:text">{{ l.text }}</span>
-            <input v-else v-model="editingText" @keyup.enter="saveEdit(l)" @keyup.esc="editingIndex=null" @blur="saveEdit(l)" :ref="el => editInput = el">
+            <input v-else v-model="editingText" @keyup.enter="saveEdit(l)" @keyup.esc="editingIndex=null" @blur="saveEdit(l)" :ref="el => { if (el) editInput.value = el }">
             <span class="dur">{{ l.duration.toFixed(1) }}s</span>
             <span style="display:flex; gap:.15rem">
               <button class="sm" @click="nudge(l, -0.1, 0)" title="시작 -0.1초" style="padding:.1rem .25rem">◄]</button>
