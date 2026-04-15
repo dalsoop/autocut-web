@@ -81,7 +81,10 @@
 <div id="app" class="app">
   <aside class="sidebar">
     <h1>🎬 AutoCut</h1>
-    <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.3rem">활성 프로젝트</label>
+    <div style="display:flex;gap:.3rem;margin-bottom:.3rem;align-items:center">
+      <label style="font-size:.75rem;color:var(--muted);flex:1">활성 프로젝트</label>
+      <button class="sm" @click="showSettings=true" title="설정">⚙</button>
+    </div>
     <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.75rem">
       <option value="" disabled>프로젝트 선택</option>
       <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
@@ -196,6 +199,42 @@
     </div>
   </main>
 
+  <div v-if="showSettings" class="modal-overlay" @click.self="showSettings=false">
+    <div class="modal" style="max-width:480px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+        <h3>⚙ 설정</h3>
+        <button class="sm" @click="showSettings=false">닫기</button>
+      </div>
+      <div style="display:grid; grid-template-columns: 120px 1fr; gap:.75rem; align-items:center">
+        <label>기본 엔진</label>
+        <select v-model="settings.defaultEngine">
+          <option value="qwen3">Qwen3-ASR-1.7B (GPU)</option>
+          <option value="whisper">Whisper (CPU)</option>
+        </select>
+        <label>기본 언어</label>
+        <select v-model="settings.defaultLang">
+          <option value="Korean">한국어</option>
+          <option value="English">English</option>
+          <option value="Japanese">日本語</option>
+          <option value="zh">中文</option>
+        </select>
+        <label>Whisper 모델</label>
+        <select v-model="settings.defaultWhisperModel">
+          <option>tiny</option><option>base</option><option>small</option>
+          <option>medium</option><option>large-v3-turbo</option><option>large-v3</option>
+        </select>
+        <label>Qwen3 디바이스</label>
+        <select v-model="settings.qwen3Device">
+          <option>cuda:0</option><option>cuda:1</option><option>cpu</option>
+        </select>
+      </div>
+      <div style="margin-top:1.5rem; display:flex; gap:.5rem; justify-content:flex-end">
+        <button class="sm" @click="showSettings=false">취소</button>
+        <button class="primary sm" @click="saveSettings">저장</button>
+      </div>
+    </div>
+  </div>
+
   <div v-if="showSynology" class="modal-overlay" @click.self="showSynology=false">
     <div class="modal">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
@@ -240,6 +279,11 @@ createApp({
     const fileInput = ref(null)
     const projects = ref([])
     const activeProject = ref("")
+    const showSettings = ref(false)
+    const settings = reactive({
+      defaultEngine: "qwen3", defaultLang: "Korean",
+      defaultWhisperModel: "medium", qwen3Device: "cuda:0",
+    })
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
 
     const activeJobs = computed(() =>
@@ -284,6 +328,23 @@ createApp({
       projects.value = await fetch("/api/projects").then(r => r.json()).catch(() => [])
       const cfg = await fetch("/api/config").then(r => r.json()).catch(() => ({}))
       if (cfg.activeProject) activeProject.value = cfg.activeProject
+      if (cfg.defaultEngine) {
+        settings.defaultEngine = cfg.defaultEngine
+        transcribeOpts.engine = cfg.defaultEngine
+      }
+      if (cfg.defaultLang) { settings.defaultLang = cfg.defaultLang; transcribeOpts.lang = cfg.defaultLang }
+      if (cfg.defaultWhisperModel) { settings.defaultWhisperModel = cfg.defaultWhisperModel; transcribeOpts.whisperModel = cfg.defaultWhisperModel }
+      if (cfg.qwen3Device) settings.qwen3Device = cfg.qwen3Device
+    }
+    async function saveSettings() {
+      await fetch("/api/config", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      })
+      showSettings.value = false
+      transcribeOpts.engine = settings.defaultEngine
+      transcribeOpts.lang = settings.defaultLang
+      transcribeOpts.whisperModel = settings.defaultWhisperModel
     }
     async function onProjectChange() {
       await fetch("/api/config", {
@@ -392,6 +453,7 @@ createApp({
       files, activeJobs, selected, subtitle, isDragging, transcribeOpts,
       showSynology, synPath, synEntries, videoEl, fileInput,
       projects, activeProject, onProjectChange, encodePath,
+      showSettings, settings, saveSettings,
       keptCount, cutCount, keptDuration, outputList,
       deleteOutput, formatLocalTime,
       selectFile, deleteFile, seek, selectAll, invertSelection,

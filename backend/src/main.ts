@@ -29,9 +29,15 @@ app.get("/api/config", async (_req, res) => {
 })
 
 app.post("/api/config", async (req, res) => {
-  const ap = req.body?.activeProject
-  if (typeof ap !== "string") return res.status(400).json({ error: "activeProject required" })
-  await saveConfig({ activeProject: ap })
+  const b = req.body || {}
+  const patch: any = {}
+  if (typeof b.activeProject === "string") patch.activeProject = b.activeProject
+  if (b.defaultEngine === "whisper" || b.defaultEngine === "qwen3") patch.defaultEngine = b.defaultEngine
+  if (["Korean", "English", "Japanese", "zh"].includes(b.defaultLang)) patch.defaultLang = b.defaultLang
+  if (typeof b.defaultWhisperModel === "string") patch.defaultWhisperModel = b.defaultWhisperModel
+  if (typeof b.qwen3Device === "string" && /^cuda:\d+$|^cpu$/.test(b.qwen3Device)) patch.qwen3Device = b.qwen3Device
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no valid fields" })
+  await saveConfig(patch)
   res.json({ ok: true })
 })
 

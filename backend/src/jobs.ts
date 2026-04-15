@@ -11,15 +11,32 @@ const CONFIG_FILE = process.env.AUTOCUT_CONFIG || "/opt/autocut/autocut-web-conf
 
 export { SYNOLOGY_DIR, PROJECTS_ROOT }
 
-type AppConfig = { activeProject: string }
+export type AppConfig = {
+  activeProject: string
+  defaultEngine: "whisper" | "qwen3"
+  defaultLang: "Korean" | "English" | "Japanese" | "zh"
+  defaultWhisperModel: string
+  qwen3Device: string
+}
+
+const DEFAULT_CONFIG: AppConfig = {
+  activeProject: "",
+  defaultEngine: "qwen3",
+  defaultLang: "Korean",
+  defaultWhisperModel: "medium",
+  qwen3Device: "cuda:0",
+}
 
 export async function loadConfig(): Promise<AppConfig> {
   const raw = await fs.readFile(CONFIG_FILE, "utf-8").catch(() => null)
-  if (!raw) return { activeProject: "" }
-  try { return JSON.parse(raw) } catch { return { activeProject: "" } }
+  if (!raw) return { ...DEFAULT_CONFIG }
+  try { return { ...DEFAULT_CONFIG, ...JSON.parse(raw) } }
+  catch { return { ...DEFAULT_CONFIG } }
 }
-export async function saveConfig(cfg: AppConfig) {
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf-8")
+export async function saveConfig(cfg: Partial<AppConfig>) {
+  const cur = await loadConfig()
+  const merged = { ...cur, ...cfg }
+  await fs.writeFile(CONFIG_FILE, JSON.stringify(merged, null, 2), "utf-8")
 }
 
 export async function listProjects(): Promise<string[]> {
@@ -136,7 +153,11 @@ async function resolveInput(relPath: string): Promise<string> {
   return path.join(root, norm)
 }
 
-export async function transcribe(filename: string, whisperModel = "tiny", lang = "Korean", engine: "whisper" | "qwen3" = "whisper") {
+export async function transcribe(filename: string, whisperModel?: string, lang?: string, engine?: "whisper" | "qwen3") {
+  const cfg = await loadConfig()
+  engine = engine || cfg.defaultEngine
+  lang = lang || cfg.defaultLang
+  whisperModel = whisperModel || cfg.defaultWhisperModel
   const filepath = await resolveInput(filename)
   await fs.access(filepath).catch(() => { throw new Error(`not found: ${filename}`) })
 
@@ -148,7 +169,7 @@ export async function transcribe(filename: string, whisperModel = "tiny", lang =
   const p = engine === "qwen3"
     ? spawn("/opt/autocut/venv/bin/python", [
         "/opt/autocut/qwen3-transcribe.py", filepath,
-        "--lang", lang, "--device", "cuda:0",
+        "--lang", lang, "--device", cfg.qwen3Device,
       ], { cwd: path.dirname(filepath), env: { ...process.env, HF_HOME: "/opt/autocut/models" } })
     : spawn(AUTOCUT_BIN, [
         "-t", filepath,
