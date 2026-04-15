@@ -185,7 +185,7 @@ export async function cut(filename: string, keepIndices: number[]) {
   job.status = "running"
   job.progress = 0
 
-  const p = spawn(AUTOCUT_BIN, ["-c", filepath], { cwd: INPUT_DIR })
+  const p = spawn(AUTOCUT_BIN, ["-c", filepath, srtPath, mdPath], { cwd: INPUT_DIR })
   p.stderr.on("data", (d) => {
     const line = String(d)
     const m = line.match(/(\d+)%/)
