@@ -1,0 +1,37 @@
+# Envato Regular License
+
+This product is sold under the Envato CodeCanyon Regular License unless otherwise stated.
+
+Full license terms:
+- Regular License: https://codecanyon.net/licenses/standard
+- Extended License: https://codecanyon.net/licenses/extended
+
+## Summary (informational, not a substitute for the full license)
+
+### Regular License
+- One End Product (one website / one organization)
+- End users may interact with the product without restriction
+- Source code modification permitted
+- Distribution of the product as-is or compiled is NOT permitted
+- One purchased Envato license = one deployment
+
+### Extended License
+- Same as Regular, but End Users may pay a fee to access the End Product
+  (i.e., commercial SaaS / subscription deployment)
+
+## Third-party components
+
+This software bundles or depends on:
+- Vue 3 (MIT)
+- Express, typia (MIT)
+- mli/autocut (Apache-2.0)
+- moviepy (MIT)
+- openai-whisper (MIT)
+- Qwen3-ASR / qwen-asr (Apache-2.0)
+- PyTorch (BSD-style)
+- ratatui, crossterm, reqwest (MIT/Apache-2.0)
+
+Each component remains under its respective upstream license.
+
+For purchase code verification, please ensure your `.env` includes valid
+`ENVATO_ITEM_ID` and `ENVATO_API_TOKEN` after purchase.
