@@ -81,15 +81,11 @@
 <div id="app" class="app">
   <aside class="sidebar">
     <h1>🎬 AutoCut</h1>
-    <div class="drop" :class="{ dragging: isDragging }"
-         @dragover.prevent="isDragging=true"
-         @dragleave="isDragging=false"
-         @drop.prevent="onDrop($event)"
-         @click="$refs.fileInput.click()">
-      <input ref="fileInput" type="file" accept="video/*,audio/*" hidden @change="onFileSelect">
-      파일을 드래그하거나 클릭
-    </div>
-    <button class="sm" style="width:100%" @click="showSynology=true">📁 Synology 브라우저</button>
+    <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.3rem">활성 프로젝트</label>
+    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.75rem">
+      <option value="" disabled>프로젝트 선택</option>
+      <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
+    </select>
 
     <h2>입력 파일 ({{ files.input.length }})</h2>
     <div v-if="files.input.length" style="margin: 0 -.4rem;">
@@ -132,7 +128,7 @@
       <div style="margin-bottom: 1rem">
         <div class="video-label">원본</div>
         <div class="video-box">
-          <video :src="`/api/input/${encodeURIComponent(selected.name)}`" controls ref="videoEl"></video>
+          <video :src="`/api/media/${encodePath(selected.name)}`" controls ref="videoEl"></video>
         </div>
       </div>
 
@@ -141,13 +137,13 @@
         <div class="output-grid">
           <div v-for="o in outputList" :key="o.name" class="output-card">
             <div class="video-box">
-              <video :src="`/api/output/${encodeURIComponent(o.name)}`" controls></video>
+              <video :src="`/api/media/${encodePath(o.name)}`" controls></video>
             </div>
             <div class="output-meta">
               <div class="output-title" :title="o.name">{{ o.label }}</div>
               <div class="muted" style="font-size:.75rem">{{ formatSize(o.size) }} · {{ formatLocalTime(o.createdAt) }}</div>
               <div style="display:flex; gap:.4rem; margin-top:.4rem">
-                <a class="button-link sm" :href="`/api/output/${encodeURIComponent(o.name)}`" :download="o.name">⬇ 다운로드</a>
+                <a class="button-link sm" :href="`/api/media/${encodePath(o.name)}`" :download="o.name">⬇ 다운로드</a>
                 <button class="sm danger" @click="deleteOutput(o.name)">삭제</button>
               </div>
             </div>
@@ -237,6 +233,9 @@ createApp({
     const synEntries = ref([])
     const videoEl = ref(null)
     const fileInput = ref(null)
+    const projects = ref([])
+    const activeProject = ref("")
+    function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
 
     const activeJobs = computed(() =>
       jobs.value.filter(j => j.status === "running" || j.status === "queued" ||
@@ -274,7 +273,20 @@ createApp({
     }
     async function reloadSubtitle() {
       if (!selected.value) return
-      subtitle.value = await fetch(`/api/subtitle/${encodeURIComponent(selected.value.name)}`).then(r => r.json())
+      subtitle.value = await fetch(`/api/subtitle/${encodePath(selected.value.name)}`).then(r => r.json())
+    }
+    async function loadProjects() {
+      projects.value = await fetch("/api/projects").then(r => r.json()).catch(() => [])
+      const cfg = await fetch("/api/config").then(r => r.json()).catch(() => ({}))
+      if (cfg.activeProject) activeProject.value = cfg.activeProject
+    }
+    async function onProjectChange() {
+      await fetch("/api/config", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activeProject: activeProject.value }),
+      })
+      selected.value = null; subtitle.value = null
+      await loadFiles()
     }
 
     function seek(t) { const v = videoEl.value; if (v) { v.currentTime = t; v.play() } }
@@ -290,7 +302,7 @@ createApp({
     }
     async function deleteFile(name) {
       if (!confirm(`${name} 삭제?`)) return
-      await fetch(`/api/input/${encodeURIComponent(name)}`, { method: "DELETE" })
+      await fetch(`/api/media/${encodePath(name)}`, { method: "DELETE" })
       selected.value = null; subtitle.value = null
       await loadFiles()
     }
@@ -342,7 +354,7 @@ createApp({
     }
     async function deleteOutput(name) {
       if (!confirm(`${name} 삭제?`)) return
-      await fetch(`/api/output/${encodeURIComponent(name)}`, { method: "DELETE" })
+      await fetch(`/api/media/${encodePath(name)}`, { method: "DELETE" })
       await loadFiles()
     }
     function formatLocalTime(iso) {
@@ -358,7 +370,8 @@ createApp({
     watch(showSynology, (v) => { if (v) loadSynology("") })
 
     let timer
-    onMounted(() => {
+    onMounted(async () => {
+      await loadProjects()
       loadFiles(); loadJobs()
       timer = setInterval(async () => {
         await loadFiles(); await loadJobs()
@@ -373,6 +386,7 @@ createApp({
     return {
       files, activeJobs, selected, subtitle, isDragging, transcribeOpts,
       showSynology, synPath, synEntries, videoEl, fileInput,
+      projects, activeProject, onProjectChange, encodePath,
       keptCount, cutCount, keptDuration, outputList,
       deleteOutput, formatLocalTime,
       selectFile, deleteFile, seek, selectAll, invertSelection,

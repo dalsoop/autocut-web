@@ -1,17 +1,17 @@
 import express from "express"
-import multer from "multer"
 import path from "path"
 import { promises as fs } from "fs"
 import { fileURLToPath } from "url"
 
 import {
-  assertJobSubmit, assertCut, assertImport,
+  assertJobSubmit, assertCut,
   stringifyStatus, stringifyFiles, stringifySubtitle, stringifySynology,
 } from "./types.js"
 import {
   transcribe, cut, getJob, listJobs, listFiles,
-  getSubtitle, listSynology, importFromSynology,
-  INPUT_DIR, OUTPUT_DIR,
+  getSubtitle, listSynology,
+  listProjects, loadConfig, saveConfig,
+  PROJECTS_ROOT, resolveAbsolute,
 } from "./jobs.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -20,39 +20,40 @@ const FRONTEND_DIR = path.resolve(__dirname, "../../frontend/public")
 const app = express()
 app.use(express.json({ limit: "10mb" }))
 
-const upload = multer({
-  dest: INPUT_DIR,
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+app.get("/api/projects", async (_req, res) => {
+  res.json(await listProjects())
 })
 
-app.post("/api/upload", upload.single("video"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "no file" })
-  const final = path.join(INPUT_DIR, req.file.originalname)
-  await fs.rename(req.file.path, final)
-  res.json({ filename: req.file.originalname, size: req.file.size })
+app.get("/api/config", async (_req, res) => {
+  res.json(await loadConfig())
+})
+
+app.post("/api/config", async (req, res) => {
+  const ap = req.body?.activeProject
+  if (typeof ap !== "string") return res.status(400).json({ error: "activeProject required" })
+  await saveConfig({ activeProject: ap })
+  res.json({ ok: true })
 })
 
 app.get("/api/files", async (_req, res) => {
   res.type("application/json").send(stringifyFiles(await listFiles()))
 })
 
-app.get("/api/subtitle/:filename", async (req, res) => {
+app.get("/api/subtitle/*", async (req, res) => {
   try {
-    const data = await getSubtitle(req.params.filename)
+    const filename = decodeURIComponent((req.params as any)[0])
+    const data = await getSubtitle(filename)
     res.type("application/json").send(stringifySubtitle(data))
   } catch (e: any) {
     res.status(400).json({ error: e.message })
   }
 })
 
-app.get("/api/input/:name", (req, res) => {
-  res.sendFile(path.join(INPUT_DIR, req.params.name))
-})
-app.get("/api/output/:name", (req, res) => {
-  res.sendFile(path.join(OUTPUT_DIR, req.params.name))
+app.get("/api/media/*", (req, res) => {
+  const rel = decodeURIComponent((req.params as any)[0])
+  res.sendFile(resolveAbsolute(rel))
 })
 
-// Synology 브라우저
 app.get("/api/synology", async (req, res) => {
   try {
     const p = typeof req.query.path === "string" ? req.query.path : ""
@@ -63,34 +64,16 @@ app.get("/api/synology", async (req, res) => {
   }
 })
 
-// Synology → input 복사
-app.post("/api/synology/import", async (req, res) => {
+app.delete("/api/media/*", async (req, res) => {
   try {
-    const body = assertImport(req.body)
-    const job = await importFromSynology(body.path)
-    res.type("application/json").send(stringifyStatus(job))
+    const rel = decodeURIComponent((req.params as any)[0])
+    const abs = resolveAbsolute(rel)
+    await fs.unlink(abs).catch(() => {})
+    await fs.unlink(abs + ".json").catch(() => {})
+    res.json({ ok: true })
   } catch (e: any) {
     res.status(400).json({ error: e.message })
   }
-})
-
-// 파일 삭제
-app.delete("/api/input/:name", async (req, res) => {
-  const name = req.params.name
-  const base = name.replace(/\.[^.]+$/, "")
-  for (const ext of ["", ".srt", ".md"]) {
-    await fs.unlink(path.join(INPUT_DIR, base + ext)).catch(() => {})
-  }
-  await fs.unlink(path.join(INPUT_DIR, name)).catch(() => {})
-  res.json({ ok: true })
-})
-
-app.delete("/api/output/:name", async (req, res) => {
-  const name = req.params.name
-  if (name.includes("/") || name.includes("..")) { res.status(400).json({ error: "invalid name" }); return }
-  await fs.unlink(path.join(OUTPUT_DIR, name)).catch(() => {})
-  await fs.unlink(path.join(OUTPUT_DIR, `${name}.json`)).catch(() => {})
-  res.json({ ok: true })
 })
 
 app.post("/api/jobs/transcribe", async (req, res) => {
@@ -126,5 +109,5 @@ app.get("*", (_req, res) => res.sendFile(path.join(FRONTEND_DIR, "index.html")))
 
 const PORT = parseInt(process.env.PORT || "8080")
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[autocut-web] :${PORT}  INPUT=${INPUT_DIR}  OUTPUT=${OUTPUT_DIR}`)
+  console.log(`[autocut-web] :${PORT}  PROJECTS_ROOT=${PROJECTS_ROOT}`)
 })

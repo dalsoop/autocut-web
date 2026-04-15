@@ -50,7 +50,15 @@ export interface FileInfo {
   outputs?: string[]
   source?: string
   createdAt?: string
+  remote?: boolean
+  remotePath?: string
 }
+
+export interface AppConfig {
+  workdir: string
+}
+export const assertConfig = typia.createAssert<AppConfig>()
+export const stringifyConfig = typia.json.createStringify<AppConfig>()
 
 export interface FileListResponse {
   input: FileInfo[]
