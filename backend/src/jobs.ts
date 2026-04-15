@@ -126,7 +126,7 @@ async function resolveInput(relPath: string): Promise<string> {
   return path.join(root, norm)
 }
 
-export async function transcribe(filename: string, whisperModel = "tiny", lang = "Korean") {
+export async function transcribe(filename: string, whisperModel = "tiny", lang = "Korean", engine: "whisper" | "qwen3" = "whisper") {
   const filepath = await resolveInput(filename)
   await fs.access(filepath).catch(() => { throw new Error(`not found: ${filename}`) })
 
@@ -134,24 +134,37 @@ export async function transcribe(filename: string, whisperModel = "tiny", lang =
   job.status = "running"
   job.progress = 0
 
-  const p = spawn(AUTOCUT_BIN, [
-    "-t", filepath,
-    "--whisper-model", whisperModel,
-    "--lang", lang,
-    "--device", "cpu",
-  ], { cwd: path.dirname(filepath) })
+  const p = engine === "qwen3"
+    ? spawn("/opt/autocut/venv/bin/python", [
+        "/opt/autocut/qwen3-transcribe.py", filepath,
+        "--lang", lang, "--device", "cuda:0",
+      ], { cwd: path.dirname(filepath), env: { ...process.env, HF_HOME: "/opt/autocut/models" } })
+    : spawn(AUTOCUT_BIN, [
+        "-t", filepath,
+        "--whisper-model", whisperModel,
+        "--lang", lang,
+        "--device", "cpu",
+      ], { cwd: path.dirname(filepath) })
 
-  p.stdout.on("data", (d) => { job.message = String(d).slice(-200) })
-  p.stderr.on("data", (d) => {
+  const handle = (d: any) => {
     const line = String(d)
-    if (line.includes("Init model")) job.progress = 10
-    if (line.includes("voice activity")) job.progress = 20
-    if (line.includes("Transcribing")) job.progress = 30
-    const m = line.match(/(\d+)%\|/)
-    if (m) job.progress = 30 + Math.round(parseInt(m[1]) * 0.65)
-    if (line.includes("Transcribed")) job.progress = 100
+    if (engine === "qwen3") {
+      if (line.includes("loading")) job.progress = 10
+      if (line.includes("loaded")) job.progress = 40
+      if (line.includes("transcribing")) job.progress = 60
+      if (line.includes("SRT written")) job.progress = 100
+    } else {
+      if (line.includes("Init model")) job.progress = 10
+      if (line.includes("voice activity")) job.progress = 20
+      if (line.includes("Transcribing")) job.progress = 30
+      const m = line.match(/(\d+)%\|/)
+      if (m) job.progress = 30 + Math.round(parseInt(m[1]) * 0.65)
+      if (line.includes("Transcribed")) job.progress = 100
+    }
     job.message = line.trim().slice(-200)
-  })
+  }
+  p.stdout.on("data", handle)
+  p.stderr.on("data", handle)
   p.on("close", async (code) => {
     job.finishedAt = new Date().toISOString()
     if (code === 0) {

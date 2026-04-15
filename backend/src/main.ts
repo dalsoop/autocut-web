@@ -84,7 +84,7 @@ app.delete("/api/media/*", async (req, res) => {
 app.post("/api/jobs/transcribe", async (req, res) => {
   try {
     const body = assertJobSubmit(req.body)
-    const job = await transcribe(body.filename, body.whisperModel, body.lang)
+    const job = await transcribe(body.filename, body.whisperModel, body.lang, body.engine)
     res.type("application/json").send(stringifyStatus(job))
   } catch (e: any) {
     res.status(400).json({ error: e.message })

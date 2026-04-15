@@ -1,8 +1,9 @@
 import typia, { tags } from "typia"
 
 export interface JobSubmitRequest {
-  filename: string & tags.MinLength<1> & tags.MaxLength<255>
-  whisperModel?: "tiny" | "base" | "small" | "medium" | "large-v3-turbo"
+  filename: string & tags.MinLength<1>
+  engine?: "whisper" | "qwen3"
+  whisperModel?: "tiny" | "base" | "small" | "medium" | "large-v3-turbo" | "large-v3"
   lang?: "Korean" | "English" | "Japanese" | "zh"
 }
 

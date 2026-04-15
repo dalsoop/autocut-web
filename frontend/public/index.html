@@ -153,9 +153,14 @@
 
       <div v-if="!subtitle?.hasSrt">
         <div class="toolbar">
-          <label>모델: <select v-model="transcribeOpts.whisperModel">
+          <label>엔진: <select v-model="transcribeOpts.engine">
+            <option value="qwen3">Qwen3-ASR-1.7B (GPU, 권장)</option>
+            <option value="whisper">Whisper (CPU)</option>
+          </select></label>
+          <label v-if="transcribeOpts.engine==='whisper'">모델: <select v-model="transcribeOpts.whisperModel">
             <option>tiny</option><option>base</option><option>small</option>
             <option>medium</option><option>large-v3-turbo</option>
+            <option>large-v3</option>
           </select></label>
           <label>언어: <select v-model="transcribeOpts.lang">
             <option value="Korean">한국어</option>
@@ -227,7 +232,7 @@ createApp({
     const selected = ref(null)
     const subtitle = ref(null)
     const isDragging = ref(false)
-    const transcribeOpts = reactive({ whisperModel: "tiny", lang: "Korean" })
+    const transcribeOpts = reactive({ engine: "qwen3", whisperModel: "tiny", lang: "Korean" })
     const showSynology = ref(false)
     const synPath = ref("")
     const synEntries = ref([])
