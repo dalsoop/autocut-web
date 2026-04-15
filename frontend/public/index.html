@@ -85,10 +85,13 @@
       <label style="font-size:.75rem;color:var(--muted);flex:1">활성 프로젝트</label>
       <button class="sm" @click="showSettings=true" title="설정">⚙</button>
     </div>
-    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.75rem">
+    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.5rem">
       <option value="" disabled>프로젝트 선택</option>
       <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
     </select>
+    <button class="sm" style="width:100%; margin-bottom:.75rem" @click="batchTranscribe" :disabled="pendingCount===0">
+      🎬 미추출 전체 자막 추출 ({{ pendingCount }})
+    </button>
 
     <h2>입력 파일 ({{ files.input.length }})</h2>
     <div v-if="files.input.length" style="margin: 0 -.4rem;">
@@ -189,16 +192,40 @@
           <button class="sm" @click="selectAll(true)">모두 유지</button>
           <button class="sm" @click="selectAll(false)">모두 제거</button>
           <button class="sm" @click="invertSelection">반전</button>
-          <button class="sm" @click="reTranscribe" title="현재 자막 삭제 후 재추출">🔄 재추출</button>
+          <button class="sm" @click="previewCut" :disabled="keptCount===0" title="유지 라인만 순차 재생">▶ 프리뷰</button>
+          <button class="sm" @click="reTranscribe" title="이전 버전은 자동 아카이브">🔄 재추출</button>
+          <button class="sm" @click="toggleVersions">📚 버전</button>
+          <a class="button-link sm" :href="`/api/media/${encodePath(srtName)}`" :download="srtName" v-if="srtName">⬇ SRT</a>
+          <a class="button-link sm" :href="`/api/vtt/${encodePath(selected.name)}`" :download="vttName" v-if="subtitle?.hasSrt">⬇ VTT</a>
+          <input v-model="cutLabel" placeholder="라벨 (선택)" style="width:120px; padding:.3rem .5rem; font-size:.8rem">
           <button class="primary" @click="startCut" :disabled="keptCount===0">✂️ 컷 편집</button>
         </div>
+        <div v-if="showVersions && versions.length" class="subtitle-list" style="margin-bottom:.5rem">
+          <div v-for="v in versions" :key="v.tag" class="subtitle-item" style="grid-template-columns: auto 1fr auto auto">
+            <input type="radio" :checked="v.active" @change="activateVersion(v.tag)">
+            <span>{{ v.active ? '현재' : v.tag }} · {{ v.engine }}{{ v.whisperModel ? '/' + v.whisperModel : '' }} · {{ v.lang }}</span>
+            <span class="muted" style="font-size:.75rem">{{ formatLocalTime(v.createdAt) }}</span>
+            <span></span>
+          </div>
+        </div>
+        </div>
+        <div v-if="searchTerm !== null" class="toolbar" style="padding-bottom:0">
+          <input v-model="searchTerm" placeholder="자막 내 검색..." @keyup.esc="searchTerm=null" style="flex:1">
+          <button class="sm" @click="searchTerm=null">닫기</button>
+        </div>
         <div class="subtitle-list">
-          <div v-for="l in subtitle.lines" :key="l.index"
-               class="subtitle-item" :class="l.kept ? 'kept' : 'cut'">
+          <div v-for="l in filteredLines" :key="l.index"
+               class="subtitle-item" :class="l.kept ? 'kept' : 'cut'"
+               style="grid-template-columns: 32px 60px 1fr auto auto">
             <input type="checkbox" v-model="l.kept">
             <span class="time" @click="seek(l.start)" style="cursor:pointer">{{ formatTime(l.start) }}</span>
-            <span>{{ l.text }}</span>
+            <span v-if="editingIndex !== l.index" @dblclick="startEdit(l)" style="cursor:text">{{ l.text }}</span>
+            <input v-else v-model="editingText" @keyup.enter="saveEdit(l)" @keyup.esc="editingIndex=null" @blur="saveEdit(l)" :ref="el => editInput = el">
             <span class="dur">{{ l.duration.toFixed(1) }}s</span>
+            <span style="display:flex; gap:.2rem">
+              <button class="sm" @click="splitAt(l)" title="이 라인 분할" style="padding:.1rem .3rem">⁝</button>
+              <button class="sm" @click="mergeWithNext(l)" title="다음 라인과 병합" style="padding:.1rem .3rem">↧</button>
+            </span>
           </div>
         </div>
       </div>
@@ -290,6 +317,14 @@ createApp({
       defaultEngine: "qwen3", defaultLang: "Korean",
       defaultWhisperModel: "medium", qwen3Device: "cuda:0",
     })
+    const versions = ref([])
+    const showVersions = ref(false)
+    const cutLabel = ref("")
+    const editingIndex = ref(null)
+    const editingText = ref("")
+    const editInput = ref(null)
+    const searchTerm = ref(null)
+    const pendingCount = ref(0)
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
 
     const activeJobs = computed(() =>
@@ -301,6 +336,21 @@ createApp({
     const keptDuration = computed(() =>
       subtitle.value?.lines.filter(l => l.kept).reduce((s, l) => s + l.duration, 0) || 0
     )
+    const srtName = computed(() => {
+      if (!selected.value) return null
+      const base = selected.value.name.replace(/\.[^.]+$/, "")
+      return base + ".srt"
+    })
+    const vttName = computed(() => {
+      if (!selected.value) return ""
+      return selected.value.name.replace(/\.[^.]+$/, "") + ".vtt"
+    })
+    const filteredLines = computed(() => {
+      if (!subtitle.value) return []
+      if (!searchTerm.value) return subtitle.value.lines
+      const q = searchTerm.value.toLowerCase()
+      return subtitle.value.lines.filter(l => l.text.toLowerCase().includes(q))
+    })
     const outputList = computed(() => {
       if (!selected.value) return []
       const base = selected.value.name.replace(/\.[^.]+$/, "")
@@ -399,9 +449,91 @@ createApp({
       const keepIndices = subtitle.value.lines.filter(l => l.kept).map(l => l.index)
       await fetch("/api/jobs/cut", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: selected.value.name, keepIndices }),
+        body: JSON.stringify({ filename: selected.value.name, keepIndices, label: cutLabel.value }),
       })
+      cutLabel.value = ""
       await loadJobs()
+    }
+
+    async function batchTranscribe() {
+      const n = pendingCount.value
+      if (!confirm(`미추출 ${n}개 파일 전부 자막 추출 시작?\n(순차 처리, GPU 하나씩)`)) return
+      await fetch("/api/jobs/transcribe-batch", { method: "POST" })
+      await loadJobs()
+      await loadPending()
+    }
+    async function loadPending() {
+      pendingCount.value = (await fetch("/api/pending").then(r => r.json()).catch(() => [])).length
+    }
+
+    function previewCut() {
+      if (!subtitle.value || !videoEl.value) return
+      const kept = subtitle.value.lines.filter(l => l.kept)
+      if (kept.length === 0) return
+      let i = 0
+      const v = videoEl.value
+      const playNext = () => {
+        if (i >= kept.length) { v.pause(); return }
+        const l = kept[i++]
+        v.currentTime = l.start
+        v.play()
+        const onTime = () => {
+          if (v.currentTime >= l.end) {
+            v.removeEventListener("timeupdate", onTime)
+            playNext()
+          }
+        }
+        v.addEventListener("timeupdate", onTime)
+      }
+      playNext()
+    }
+
+    async function loadVersions() {
+      if (!selected.value) { versions.value = []; return }
+      versions.value = await fetch(`/api/subtitle-versions/${encodePath(selected.value.name)}`).then(r => r.json()).catch(() => [])
+    }
+    async function toggleVersions() {
+      showVersions.value = !showVersions.value
+      if (showVersions.value) await loadVersions()
+    }
+    async function activateVersion(tag) {
+      await fetch(`/api/subtitle-activate/${encodePath(selected.value.name)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      })
+      await reloadSubtitle()
+      await loadVersions()
+    }
+
+    function startEdit(l) {
+      editingIndex.value = l.index
+      editingText.value = l.text
+      setTimeout(() => editInput.value?.focus(), 0)
+    }
+    async function saveEdit(l) {
+      if (editingIndex.value !== l.index) return
+      const newText = editingText.value.trim()
+      editingIndex.value = null
+      if (newText === l.text || !newText) return
+      await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edits: [{ index: l.index, text: newText }] }),
+      })
+      await reloadSubtitle()
+    }
+    async function splitAt(l) {
+      await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "split", index: l.index }),
+      })
+      await reloadSubtitle()
+    }
+    async function mergeWithNext(l) {
+      await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "merge", index: l.index }),
+      })
+      await reloadSubtitle()
     }
 
     async function loadSynology(p) {
@@ -450,12 +582,18 @@ createApp({
 
     watch(showSynology, (v) => { if (v) loadSynology("") })
 
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && !e.target.matches("input,textarea")) {
+        if (subtitle.value) { searchTerm.value = ""; e.preventDefault() }
+      }
+    })
+
     let timer
     onMounted(async () => {
       await loadProjects()
-      loadFiles(); loadJobs()
+      loadFiles(); loadJobs(); loadPending()
       timer = setInterval(async () => {
-        await loadFiles(); await loadJobs()
+        await loadFiles(); await loadJobs(); await loadPending()
         if (selected.value) {
           const f = files.input.find(x => x.name === selected.value.name)
           if (f && f.hasSubtitle && !subtitle.value?.hasSrt) await reloadSubtitle()
@@ -473,6 +611,11 @@ createApp({
       deleteOutput, formatLocalTime,
       selectFile, deleteFile, seek, selectAll, invertSelection,
       onFileSelect, onDrop, startTranscribe, reTranscribe, startCut,
+      batchTranscribe, previewCut, pendingCount,
+      versions, showVersions, toggleVersions, activateVersion,
+      cutLabel, srtName, vttName,
+      editingIndex, editingText, editInput, startEdit, saveEdit,
+      splitAt, mergeWithNext, searchTerm, filteredLines,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }

@@ -39,6 +39,17 @@ export async function saveConfig(cfg: Partial<AppConfig>) {
   await fs.writeFile(CONFIG_FILE, JSON.stringify(merged, null, 2), "utf-8")
 }
 
+/** 현재 프로젝트에서 자막 없는 파일 리스트 (배치 transcribe 대상) */
+export async function listPendingTranscribe(): Promise<string[]> {
+  const cfg = await loadConfig()
+  if (!cfg.activeProject) return []
+  const root = path.join(PROJECTS_ROOT, cfg.activeProject)
+  const all = await walkVideos(root)
+  return all
+    .filter(f => !f.hasSubtitle && !path.basename(f.name).replace(/\.[^.]+$/, "").includes("_cut"))
+    .map(f => f.name)
+}
+
 export async function listProjects(): Promise<string[]> {
   const names = await fs.readdir(PROJECTS_ROOT).catch(() => [])
   const out: string[] = []
@@ -58,6 +69,8 @@ async function getProjectDir(): Promise<string> {
 
 const jobs = new Map<string, JobStatus>()
 const jobProcesses = new Map<string, import("child_process").ChildProcess>()
+// Transcribe 순차 처리 (GPU OOM 방지)
+let transcribeQueue: Promise<void> = Promise.resolve()
 export function getJob(id: string) { return jobs.get(id) }
 export function listJobs() {
   return [...jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -168,11 +181,24 @@ export async function transcribe(filename: string, whisperModel?: string, lang?:
   lang = lang || cfg.defaultLang
   whisperModel = whisperModel || cfg.defaultWhisperModel
 
-  // 재추출 시 기존 SRT/MD 삭제 (autocut CLI가 기존 파일에 민감)
+  // 재추출 시 기존 SRT/MD를 버전 폴더로 archive
   const filepath2 = await resolveInput(filename)
   const base2 = filepath2.replace(/\.[^.]+$/, "")
-  await fs.unlink(base2 + ".srt").catch(() => {})
-  await fs.unlink(base2 + ".md").catch(() => {})
+  const versionsDir = base2 + "_subs"
+  const existing = await fs.access(base2 + ".srt").then(() => true).catch(() => false)
+  if (existing) {
+    await fs.mkdir(versionsDir, { recursive: true })
+    const prevMeta = await fs.readFile(base2 + ".srt.meta.json", "utf-8")
+      .then(s => JSON.parse(s)).catch(() => null)
+    const prevEngine = prevMeta?.engine || "unknown"
+    const prevTs = (prevMeta?.createdAt || new Date().toISOString()).replace(/[-:T]/g, "").slice(0, 15)
+    const tag = `${prevTs}_${prevEngine}` + (prevMeta?.whisperModel ? `_${prevMeta.whisperModel}` : "")
+    for (const ext of [".srt", ".md", ".srt.meta.json"]) {
+      if (await fs.access(base2 + ext).then(() => true).catch(() => false)) {
+        await fs.rename(base2 + ext, path.join(versionsDir, `${tag}${ext}`)).catch(() => {})
+      }
+    }
+  }
   const filepath = await resolveInput(filename)
   await fs.access(filepath).catch(() => { throw new Error(`not found: ${filename}`) })
 
@@ -269,6 +295,158 @@ async function parseSrt(srtPath: string): Promise<SubtitleLine[]> {
   return lines
 }
 
+function fmtSrtTs(sec: number): string {
+  const ms = Math.round(sec * 1000)
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  const mss = ms % 1000
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")},${String(mss).padStart(3,"0")}`
+}
+
+export async function writeSrt(srtPath: string, lines: SubtitleLine[]) {
+  const out = lines.map((l, i) =>
+    `${i+1}\n${fmtSrtTs(l.start)} --> ${fmtSrtTs(l.end)}\n${l.text.trim()}\n`
+  ).join("\n")
+  await fs.writeFile(srtPath, out, "utf-8")
+}
+
+/** 자막 라인 편집 (텍스트만 변경, 타임스탬프 유지) */
+export async function editLines(filename: string, edits: { index: number; text: string }[]) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await parseSrt(base + ".srt")
+  const byIdx = new Map(lines.map(l => [l.index, l]))
+  for (const e of edits) {
+    const l = byIdx.get(e.index)
+    if (l) l.text = e.text
+  }
+  await writeSrt(base + ".srt", lines)
+  return lines
+}
+
+/** 라인 split: 중간 시점에서 둘로 나눔 */
+export async function splitLine(filename: string, index: number, splitAtSec?: number) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await parseSrt(base + ".srt")
+  const i = lines.findIndex(l => l.index === index)
+  if (i < 0) throw new Error("line not found")
+  const l = lines[i]
+  const mid = splitAtSec ?? (l.start + l.end) / 2
+  const halfLen = Math.floor(l.text.length / 2)
+  const first = { ...l, end: mid, text: l.text.slice(0, halfLen).trim() }
+  const second = {
+    ...l, index: 0, start: mid,
+    text: l.text.slice(halfLen).trim(),
+    duration: +(l.end - mid).toFixed(2),
+  }
+  first.duration = +(mid - l.start).toFixed(2)
+  lines.splice(i, 1, first, second)
+  // 인덱스 재부여
+  lines.forEach((x, k) => x.index = k + 1)
+  await writeSrt(base + ".srt", lines)
+  return lines
+}
+
+/** 라인 merge: 다음 라인과 합침 */
+export async function mergeNext(filename: string, index: number) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await parseSrt(base + ".srt")
+  const i = lines.findIndex(l => l.index === index)
+  if (i < 0 || i + 1 >= lines.length) throw new Error("merge 불가")
+  const merged = {
+    ...lines[i],
+    end: lines[i+1].end,
+    text: (lines[i].text + " " + lines[i+1].text).trim(),
+    duration: +(lines[i+1].end - lines[i].start).toFixed(2),
+  }
+  lines.splice(i, 2, merged)
+  lines.forEach((x, k) => x.index = k + 1)
+  await writeSrt(base + ".srt", lines)
+  return lines
+}
+
+/** 자막 버전 목록 */
+export async function listSubtitleVersions(filename: string) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const versionsDir = base + "_subs"
+  const entries = []
+  const currentMeta = await fs.readFile(base + ".srt.meta.json", "utf-8")
+    .then(s => JSON.parse(s)).catch(() => null)
+  if (await fs.access(base + ".srt").then(() => true).catch(() => false)) {
+    entries.push({
+      tag: "current",
+      engine: currentMeta?.engine || "unknown",
+      whisperModel: currentMeta?.whisperModel,
+      lang: currentMeta?.lang,
+      createdAt: currentMeta?.createdAt,
+      active: true,
+    })
+  }
+  const names = await fs.readdir(versionsDir).catch(() => [])
+  for (const n of names) {
+    if (!n.endsWith(".srt")) continue
+    const tag = n.replace(/\.srt$/, "")
+    const metaPath = path.join(versionsDir, `${tag}.srt.meta.json`)
+    const meta = await fs.readFile(metaPath, "utf-8")
+      .then(s => JSON.parse(s)).catch(() => null)
+    entries.push({
+      tag,
+      engine: meta?.engine,
+      whisperModel: meta?.whisperModel,
+      lang: meta?.lang,
+      createdAt: meta?.createdAt,
+      active: false,
+    })
+  }
+  return entries
+}
+
+/** 특정 버전을 current로 복원 */
+export async function activateSubtitleVersion(filename: string, tag: string) {
+  if (tag === "current") return
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const versionsDir = base + "_subs"
+  // 현재 → 버전 폴더로 archive (tag 다시 생성)
+  const curMeta = await fs.readFile(base + ".srt.meta.json", "utf-8")
+    .then(s => JSON.parse(s)).catch(() => null)
+  if (curMeta) {
+    await fs.mkdir(versionsDir, { recursive: true })
+    const curTs = (curMeta.createdAt || new Date().toISOString()).replace(/[-:T]/g, "").slice(0,15)
+    const curTag = `${curTs}_${curMeta.engine || "unknown"}` + (curMeta.whisperModel ? `_${curMeta.whisperModel}` : "")
+    for (const ext of [".srt", ".md", ".srt.meta.json"]) {
+      if (await fs.access(base + ext).then(() => true).catch(() => false)) {
+        await fs.rename(base + ext, path.join(versionsDir, `${curTag}${ext}`)).catch(() => {})
+      }
+    }
+  }
+  // 선택 버전 → current로 복원
+  for (const ext of [".srt", ".md", ".srt.meta.json"]) {
+    const src = path.join(versionsDir, `${tag}${ext}`)
+    if (await fs.access(src).then(() => true).catch(() => false)) {
+      await fs.rename(src, base + ext).catch(() => {})
+    }
+  }
+}
+
+/** VTT 변환 */
+export async function getVtt(filename: string): Promise<string> {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await parseSrt(base + ".srt")
+  const out = ["WEBVTT", ""]
+  for (const l of lines) {
+    out.push(`${fmtSrtTs(l.start).replace(",", ".")} --> ${fmtSrtTs(l.end).replace(",", ".")}`)
+    out.push(l.text)
+    out.push("")
+  }
+  return out.join("\n")
+}
+
 async function parseMd(mdPath: string): Promise<Set<number>> {
   const raw = await fs.readFile(mdPath, "utf-8").catch(() => "")
   const kept = new Set<number>()
@@ -298,7 +476,7 @@ export async function getSubtitle(filename: string): Promise<SubtitleData> {
   return { filename, lines, totalDuration: +total.toFixed(2), hasSrt, hasMd }
 }
 
-export async function cut(filename: string, keepIndices: number[]) {
+export async function cut(filename: string, keepIndices: number[], label?: string) {
   const filepath = await resolveInput(filename)
   const base = filepath.replace(/\.[^.]+$/, "")
   const srtPath = base + ".srt"
@@ -338,7 +516,8 @@ export async function cut(filename: string, keepIndices: number[]) {
     if (code === 0) {
       const srcCut = path.join(dir, `${fileBase}_cut.mp4`)
       const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)
-      const dstName = `${fileBase}_cut_${ts}.mp4`
+      const safeLabel = label ? "_" + label.replace(/[^\w가-힣-]/g, "_").slice(0, 40) : ""
+      const dstName = `${fileBase}_cut_${ts}${safeLabel}.mp4`
       const dst = path.join(dir, dstName)
       await fs.rename(srcCut, dst).catch(() => {})
       // SRT 메타 읽어서 결과에 포함

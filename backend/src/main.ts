@@ -11,6 +11,9 @@ import {
   transcribe, cut, getJob, listJobs, listFiles, cancelJob,
   getSubtitle, listSynology,
   listProjects, loadConfig, saveConfig,
+  listPendingTranscribe,
+  editLines, splitLine, mergeNext, getVtt,
+  listSubtitleVersions, activateSubtitleVersion,
   PROJECTS_ROOT, resolveAbsolute,
 } from "./jobs.js"
 
@@ -100,11 +103,80 @@ app.post("/api/jobs/transcribe", async (req, res) => {
 app.post("/api/jobs/cut", async (req, res) => {
   try {
     const body = assertCut(req.body)
-    const job = await cut(body.filename, body.keepIndices)
+    const job = await cut(body.filename, body.keepIndices, (req.body as any)?.label)
     res.type("application/json").send(stringifyStatus(job))
   } catch (e: any) {
     res.status(400).json({ error: e.message })
   }
+})
+
+/** 자막 라인 편집 */
+app.patch("/api/subtitle/*", async (req, res) => {
+  try {
+    const filename = decodeURIComponent((req.params as any)[0])
+    const b = req.body || {}
+    if (Array.isArray(b.edits)) {
+      const lines = await editLines(filename, b.edits)
+      return res.json({ ok: true, lines: lines.length })
+    }
+    if (b.action === "split" && typeof b.index === "number") {
+      await splitLine(filename, b.index, typeof b.at === "number" ? b.at : undefined)
+      return res.json({ ok: true })
+    }
+    if (b.action === "merge" && typeof b.index === "number") {
+      await mergeNext(filename, b.index)
+      return res.json({ ok: true })
+    }
+    res.status(400).json({ error: "invalid body" })
+  } catch (e: any) {
+    res.status(400).json({ error: e.message })
+  }
+})
+
+/** VTT 다운로드 */
+app.get("/api/vtt/*", async (req, res) => {
+  try {
+    const filename = decodeURIComponent((req.params as any)[0])
+    const vtt = await getVtt(filename)
+    res.type("text/vtt").send(vtt)
+  } catch (e: any) {
+    res.status(400).json({ error: e.message })
+  }
+})
+
+/** 배치 transcribe — 미추출 파일 전부 큐에 */
+app.post("/api/jobs/transcribe-batch", async (_req, res) => {
+  try {
+    const pending = await listPendingTranscribe()
+    const jobs = []
+    for (const f of pending) {
+      jobs.push(await transcribe(f))
+    }
+    res.json({ queued: jobs.length, jobs })
+  } catch (e: any) {
+    res.status(400).json({ error: e.message })
+  }
+})
+
+app.get("/api/pending", async (_req, res) => {
+  res.json(await listPendingTranscribe())
+})
+
+app.get("/api/subtitle-versions/*", async (req, res) => {
+  try {
+    const filename = decodeURIComponent((req.params as any)[0])
+    res.json(await listSubtitleVersions(filename))
+  } catch (e: any) { res.status(400).json({ error: e.message }) }
+})
+
+app.post("/api/subtitle-activate/*", async (req, res) => {
+  try {
+    const filename = decodeURIComponent((req.params as any)[0])
+    const tag = req.body?.tag
+    if (typeof tag !== "string") return res.status(400).json({ error: "tag required" })
+    await activateSubtitleVersion(filename, tag)
+    res.json({ ok: true })
+  } catch (e: any) { res.status(400).json({ error: e.message }) }
 })
 
 app.get("/api/jobs/:id", (req, res) => {
