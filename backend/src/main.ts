@@ -85,6 +85,14 @@ app.delete("/api/input/:name", async (req, res) => {
   res.json({ ok: true })
 })
 
+app.delete("/api/output/:name", async (req, res) => {
+  const name = req.params.name
+  if (name.includes("/") || name.includes("..")) { res.status(400).json({ error: "invalid name" }); return }
+  await fs.unlink(path.join(OUTPUT_DIR, name)).catch(() => {})
+  await fs.unlink(path.join(OUTPUT_DIR, `${name}.json`)).catch(() => {})
+  res.json({ ok: true })
+})
+
 app.post("/api/jobs/transcribe", async (req, res) => {
   try {
     const body = assertJobSubmit(req.body)

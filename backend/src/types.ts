@@ -47,6 +47,9 @@ export interface FileInfo {
   hasSubtitle: boolean
   hasOutput: boolean
   type: "video" | "audio" | "other"
+  outputs?: string[]
+  source?: string
+  createdAt?: string
 }
 
 export interface FileListResponse {

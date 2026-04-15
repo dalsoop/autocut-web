@@ -34,6 +34,13 @@ function fileType(name: string): FileInfo["type"] {
   return "other"
 }
 
+async function listOutputsFor(inputName: string): Promise<string[]> {
+  const base = inputName.replace(/\.[^.]+$/, "")
+  const names = await fs.readdir(OUTPUT_DIR).catch(() => [])
+  return names.filter(n => !n.endsWith(".json") && (n === `${base}_cut.mp4` || n.startsWith(`${base}_cut_`)))
+    .sort()
+}
+
 export async function listFiles() {
   async function scan(dir: string): Promise<FileInfo[]> {
     const names = await fs.readdir(dir).catch(() => [])
@@ -45,11 +52,21 @@ export async function listFiles() {
       const stat = await fs.stat(path.join(dir, n)).catch(() => null)
       if (!stat) continue
       const base = n.replace(/\.[^.]+$/, "")
-      const hasSubtitle = await fs.access(path.join(INPUT_DIR, `${base}.srt`))
-        .then(() => true).catch(() => false)
-      const hasOutput = await fs.access(path.join(OUTPUT_DIR, `${base}_cut.mp4`))
-        .then(() => true).catch(() => false)
-      result.push({ name: n, size: stat.size, type, hasSubtitle, hasOutput })
+      const hasSubtitle = dir === INPUT_DIR
+        ? await fs.access(path.join(INPUT_DIR, `${base}.srt`)).then(() => true).catch(() => false)
+        : false
+      const outputs = dir === INPUT_DIR ? await listOutputsFor(n) : []
+      const hasOutput = outputs.length > 0
+      // output 파일이면 source 필드 포함
+      let source: string | undefined
+      let createdAt: string | undefined
+      if (dir === OUTPUT_DIR) {
+        const meta = await fs.readFile(path.join(OUTPUT_DIR, `${n}.json`), "utf-8")
+          .then(s => JSON.parse(s)).catch(() => null)
+        source = meta?.source
+        createdAt = meta?.createdAt
+      }
+      result.push({ name: n, size: stat.size, type, hasSubtitle, hasOutput, outputs, source, createdAt })
     }
     return result.sort((a, b) => a.name.localeCompare(b.name, "ko"))
   }
@@ -197,13 +214,20 @@ export async function cut(filename: string, keepIndices: number[]) {
   p.on("close", async (code) => {
     job.finishedAt = new Date().toISOString()
     if (code === 0) {
-      const outName = `${base}_cut.mp4`
-      const src = path.join(INPUT_DIR, outName)
-      const dst = path.join(OUTPUT_DIR, outName)
+      const srcName = `${base}_cut.mp4`
+      const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)
+      const dstName = `${base}_cut_${ts}.mp4`
+      const src = path.join(INPUT_DIR, srcName)
+      const dst = path.join(OUTPUT_DIR, dstName)
       await fs.rename(src, dst).catch(() => {})
+      // 사이드카로 keepIndices 기록
+      await fs.writeFile(
+        path.join(OUTPUT_DIR, `${dstName}.json`),
+        JSON.stringify({ source: filename, keepIndices, createdAt: job.finishedAt }, null, 2)
+      ).catch(() => {})
       job.status = "done"
       job.progress = 100
-      job.outputs = [outName]
+      job.outputs = [dstName]
     } else {
       job.status = "failed"
       job.message = `exit ${code}: ${job.message}`

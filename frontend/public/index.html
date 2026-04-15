@@ -41,6 +41,14 @@
   .video-grid.single { grid-template-columns: 1fr; }
   .video-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .35rem; font-weight: 600; }
   .video-label.result { color: var(--ok); }
+  .output-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .75rem; }
+  .output-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .output-card .video-box { border-radius: 0; }
+  .output-card .video-box video { max-height: 200px; }
+  .output-meta { padding: .6rem .75rem; }
+  .output-title { font-size: .85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .button-link { display: inline-block; background: var(--accent); color: white; padding: .25rem .6rem; border-radius: 5px; text-decoration: none; font-size: .8rem; }
+  .button-link:hover { background: var(--accent-h); text-decoration: none; }
   .subtitle-list { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .subtitle-item { display: grid; grid-template-columns: 32px 70px auto 1fr; gap: .5rem; padding: .6rem .75rem; border-bottom: 1px solid var(--border); align-items: center; transition: background .1s; }
   .subtitle-item:last-child { border-bottom: 0; }
@@ -121,17 +129,28 @@
         <button class="danger sm" @click="deleteFile(selected.name)">삭제</button>
       </div>
 
-      <div class="video-grid" :class="{ single: !outputName }">
-        <div>
-          <div class="video-label">원본</div>
-          <div class="video-box">
-            <video :src="`/api/input/${encodeURIComponent(selected.name)}`" controls ref="videoEl"></video>
-          </div>
+      <div style="margin-bottom: 1rem">
+        <div class="video-label">원본</div>
+        <div class="video-box">
+          <video :src="`/api/input/${encodeURIComponent(selected.name)}`" controls ref="videoEl"></video>
         </div>
-        <div v-if="outputName">
-          <div class="video-label result">편집본 · <a :href="`/api/output/${encodeURIComponent(outputName)}`" :download="outputName">다운로드</a></div>
-          <div class="video-box">
-            <video :src="`/api/output/${encodeURIComponent(outputName)}`" controls></video>
+      </div>
+
+      <div v-if="outputList.length" style="margin-bottom: 1rem">
+        <div class="video-label result">편집본 ({{ outputList.length }})</div>
+        <div class="output-grid">
+          <div v-for="o in outputList" :key="o.name" class="output-card">
+            <div class="video-box">
+              <video :src="`/api/output/${encodeURIComponent(o.name)}`" controls></video>
+            </div>
+            <div class="output-meta">
+              <div class="output-title" :title="o.name">{{ o.label }}</div>
+              <div class="muted" style="font-size:.75rem">{{ formatSize(o.size) }} · {{ formatLocalTime(o.createdAt) }}</div>
+              <div style="display:flex; gap:.4rem; margin-top:.4rem">
+                <a class="button-link sm" :href="`/api/output/${encodeURIComponent(o.name)}`" :download="o.name">⬇ 다운로드</a>
+                <button class="sm danger" @click="deleteOutput(o.name)">삭제</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -228,12 +247,17 @@ createApp({
     const keptDuration = computed(() =>
       subtitle.value?.lines.filter(l => l.kept).reduce((s, l) => s + l.duration, 0) || 0
     )
-    const outputName = computed(() => {
-      if (!selected.value) return null
+    const outputList = computed(() => {
+      if (!selected.value) return []
       const base = selected.value.name.replace(/\.[^.]+$/, "")
-      const candidates = [`${base}_cut.mp4`, `${base}_cut.mp3`]
-      const hit = files.output.find(f => candidates.includes(f.name))
-      return hit?.name || null
+      return files.output
+        .filter(f => f.source === selected.value.name ||
+          f.name === `${base}_cut.mp4` || f.name.startsWith(`${base}_cut_`))
+        .map(f => ({
+          ...f,
+          label: f.name.replace(`${base}_cut_`, "컷 ").replace(`${base}_cut.mp4`, "컷 (초기)").replace(/\.mp4$/, ""),
+        }))
+        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
     })
 
     async function loadFiles() {
@@ -316,6 +340,16 @@ createApp({
       const m = Math.floor(s/60), sec = Math.floor(s%60)
       return `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
     }
+    async function deleteOutput(name) {
+      if (!confirm(`${name} 삭제?`)) return
+      await fetch(`/api/output/${encodeURIComponent(name)}`, { method: "DELETE" })
+      await loadFiles()
+    }
+    function formatLocalTime(iso) {
+      if (!iso) return ""
+      const d = new Date(iso)
+      return d.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    }
     function formatDuration(s) {
       if (s < 60) return s.toFixed(1) + "s"
       return `${Math.floor(s/60)}m ${Math.floor(s%60)}s`
@@ -339,7 +373,8 @@ createApp({
     return {
       files, activeJobs, selected, subtitle, isDragging, transcribeOpts,
       showSynology, synPath, synEntries, videoEl, fileInput,
-      keptCount, cutCount, keptDuration, outputName,
+      keptCount, cutCount, keptDuration, outputList,
+      deleteOutput, formatLocalTime,
       selectFile, deleteFile, seek, selectAll, invertSelection,
       onFileSelect, onDrop, startTranscribe, startCut,
       loadSynology, clickSynology, importFile,
