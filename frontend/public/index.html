@@ -134,7 +134,13 @@
       <div style="margin-bottom: 1rem">
         <div class="video-label">원본</div>
         <div class="video-box">
-          <video :src="`/api/media/${encodePath(selected.name)}`" controls ref="videoEl"></video>
+          <video controls ref="videoEl" crossorigin="anonymous" :key="selected.name">
+            <source :src="`/api/media/${encodePath(selected.name)}`">
+            <track v-if="subtitle?.hasSrt" kind="subtitles"
+                   :src="`/api/vtt/${encodePath(selected.name)}?v=${subtitleVersion}`"
+                   :srclang="subtitle.lang === 'Korean' ? 'ko' : (subtitle.lang === 'English' ? 'en' : 'und')"
+                   :label="subtitle.lang || '자막'" default>
+          </video>
         </div>
       </div>
 
@@ -143,7 +149,13 @@
         <div class="output-grid">
           <div v-for="o in outputList" :key="o.name" class="output-card">
             <div class="video-box">
-              <video :src="`/api/media/${encodePath(o.name)}`" controls></video>
+              <video controls crossorigin="anonymous">
+                <source :src="`/api/media/${encodePath(o.name)}`">
+                <track v-if="subtitle?.hasSrt" kind="subtitles"
+                       :src="`/api/vtt/${encodePath(selected.name)}?v=${subtitleVersion}`"
+                       :srclang="subtitle.lang === 'Korean' ? 'ko' : 'und'"
+                       :label="subtitle.lang || '자막'" default>
+              </video>
             </div>
             <div class="output-meta">
               <div class="output-title" :title="o.name">{{ o.label }}</div>
@@ -345,6 +357,7 @@ createApp({
     const pendingCount = ref(0)
     const jobLogOpen = ref(null)
     const jobLogText = ref("")
+    const subtitleVersion = ref(Date.now())  // 자막 변경 시 video <track> 캐시 버스팅
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
     function setEditInput(el) { if (el) editInput.value = el }
 
@@ -400,6 +413,7 @@ createApp({
     async function reloadSubtitle() {
       if (!selected.value) return
       subtitle.value = await fetch(`/api/subtitle/${encodePath(selected.value.name)}`).then(r => r.json())
+      subtitleVersion.value = Date.now()
     }
     async function loadProjects() {
       projects.value = await fetch("/api/projects").then(r => r.json()).catch(() => [])
@@ -664,7 +678,7 @@ createApp({
       cutLabel, srtName, vttName,
       editingIndex, editingText, editInput, setEditInput, startEdit, saveEdit,
       splitAt, mergeWithNext, nudge, searchTerm, filteredLines,
-      jobLogOpen, jobLogText, viewJobLog,
+      jobLogOpen, jobLogText, viewJobLog, subtitleVersion,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }
