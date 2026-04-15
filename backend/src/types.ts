@@ -1,17 +1,14 @@
 import typia, { tags } from "typia"
 
 export interface JobSubmitRequest {
-  /** 서버에 업로드된 파일의 basename (예: video.mp4) */
   filename: string & tags.MinLength<1> & tags.MaxLength<255>
-  /** Whisper 모델 */
   whisperModel?: "tiny" | "base" | "small" | "medium" | "large-v3-turbo"
-  /** 언어 */
-  lang?: "ko" | "en" | "ja" | "zh" | "auto"
+  lang?: "Korean" | "English" | "Japanese" | "zh"
 }
 
 export interface JobStatus {
   id: string
-  type: "transcribe" | "cut"
+  type: "transcribe" | "cut" | "import"
   filename: string
   status: "queued" | "running" | "done" | "failed"
   progress?: number
@@ -22,18 +19,63 @@ export interface JobStatus {
 }
 
 export interface CutRequest {
-  /** 입력 영상 파일명 */
   filename: string & tags.MinLength<1>
-  /** 편집된 MD 내용 (원본 자막에서 원치 않는 줄 제거한 상태) */
-  mdContent: string & tags.MinLength<1>
+  /** 선택된 subtitle 인덱스 (SRT의 순번) */
+  keepIndices: number[]
+}
+
+export interface SubtitleLine {
+  index: number
+  start: number
+  end: number
+  duration: number
+  text: string
+  kept: boolean
+}
+
+export interface SubtitleData {
+  filename: string
+  lines: SubtitleLine[]
+  totalDuration: number
+  hasSrt: boolean
+  hasMd: boolean
+}
+
+export interface FileInfo {
+  name: string
+  size: number
+  hasSubtitle: boolean
+  hasOutput: boolean
+  type: "video" | "audio" | "other"
 }
 
 export interface FileListResponse {
-  input: string[]
-  output: string[]
+  input: FileInfo[]
+  output: FileInfo[]
+}
+
+export interface SynologyEntry {
+  name: string
+  path: string
+  type: "file" | "dir"
+  size?: number
+}
+
+export interface SynologyListing {
+  path: string
+  parent: string | null
+  entries: SynologyEntry[]
+}
+
+export interface ImportRequest {
+  /** /mnt/video 기준 상대 경로 */
+  path: string & tags.MinLength<1>
 }
 
 export const assertJobSubmit = typia.createAssert<JobSubmitRequest>()
 export const assertCut = typia.createAssert<CutRequest>()
+export const assertImport = typia.createAssert<ImportRequest>()
 export const stringifyStatus = typia.json.createStringify<JobStatus>()
 export const stringifyFiles = typia.json.createStringify<FileListResponse>()
+export const stringifySubtitle = typia.json.createStringify<SubtitleData>()
+export const stringifySynology = typia.json.createStringify<SynologyListing>()
