@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AutoCut Web</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; background: #f7f7f8; color: #222; }
+  .app { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; color: #555; }
+  .card { background: #fff; border: 1px solid #e5e5e7; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  button { background: #111; color: #fff; border: 0; padding: .5rem 1rem; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+  button:disabled { background: #bbb; cursor: not-allowed; }
+  button.ghost { background: #eee; color: #222; }
+  input[type=file] { font: inherit; }
+  select, input[type=text] { padding: .4rem .6rem; border: 1px solid #ddd; border-radius: 6px; font: inherit; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .muted { color: #888; font-size: .85rem; }
+  .badge { padding: .15rem .5rem; border-radius: 10px; font-size: .75rem; font-weight: 500; }
+  .badge-run { background: #fff3cd; color: #856404; }
+  .badge-done { background: #d1ecf1; color: #0c5460; }
+  .badge-fail { background: #f8d7da; color: #721c24; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: .35rem 0; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
+  textarea { width: 100%; min-height: 220px; padding: .6rem; border: 1px solid #ddd; border-radius: 6px; font-family: ui-monospace, monospace; font-size: .85rem; }
+  .progress { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+  .progress-bar { height: 100%; background: #4caf50; transition: width .3s; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="app" class="app">
+
+  <h1>🎬 AutoCut Web</h1>
+  <p class="muted">Whisper 기반 자동 자막 추출 + 영상 컷 편집</p>
+
+  <!-- 업로드 -->
+  <div class="card">
+    <h2>📥 영상 업로드</h2>
+    <form @submit.prevent="doUpload" class="row">
+      <input type="file" @change="selectedFile = $event.target.files[0]" accept="video/*">
+      <button :disabled="!selectedFile || uploading">
+        {{ uploading ? '업로드 중...' : '업로드' }}
+      </button>
+    </form>
+  </div>
+
+  <!-- 파일 + 작업 -->
+  <div class="card">
+    <h2>📂 입력 파일</h2>
+    <ul v-if="files.input.length">
+      <li v-for="f in files.input" :key="f">
+        <span>{{ f }}</span>
+        <span class="row">
+          <select v-model="transcribeOpts.whisperModel" v-if="canStartTranscribe(f)">
+            <option>tiny</option><option>base</option><option>small</option>
+            <option>medium</option><option>large-v3-turbo</option>
+          </select>
+          <select v-model="transcribeOpts.lang" v-if="canStartTranscribe(f)">
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="zh">中文</option>
+            <option value="auto">자동</option>
+          </select>
+          <button v-if="canStartTranscribe(f)" @click="startTranscribe(f)">자막 추출</button>
+          <a v-if="hasSubtitle(f)" @click.prevent="openEditor(f)" href="#">편집</a>
+        </span>
+      </li>
+    </ul>
+    <p v-else class="muted">업로드된 파일 없음</p>
+  </div>
+
+  <!-- MD 에디터 -->
+  <div v-if="editing" class="card">
+    <h2>✂️ 자막 편집: {{ editing }}</h2>
+    <p class="muted">원치 않는 줄을 삭제하세요. 남은 줄의 구간만 영상에 남습니다.</p>
+    <textarea v-model="mdContent"></textarea>
+    <div class="row" style="margin-top:.75rem">
+      <button @click="doCut">컷 편집 시작</button>
+      <button class="ghost" @click="editing=null">닫기</button>
+    </div>
+  </div>
+
+  <!-- 잡 상태 -->
+  <div class="card">
+    <h2>⚙️ 작업 상태</h2>
+    <ul v-if="jobs.length">
+      <li v-for="j in jobs" :key="j.id">
+        <span>
+          <span class="badge" :class="'badge-' + (j.status==='failed'?'fail':j.status==='done'?'done':'run')">
+            {{ j.status }}
+          </span>
+          {{ j.type }} · {{ j.filename }}
+          <span class="muted" v-if="j.progress">{{ j.progress }}%</span>
+        </span>
+      </li>
+    </ul>
+    <p v-else class="muted">없음</p>
+  </div>
+
+  <!-- 결과 -->
+  <div class="card">
+    <h2>📤 결과</h2>
+    <ul v-if="files.output.length">
+      <li v-for="f in files.output" :key="f">
+        <a :href="`/api/output/${f}`" :download="f">{{ f }}</a>
+      </li>
+    </ul>
+    <p v-else class="muted">아직 없음</p>
+  </div>
+
+</div>
+
+<script>
+const { createApp, reactive, ref, onMounted, onUnmounted } = Vue
+
+createApp({
+  setup() {
+    const selectedFile = ref(null)
+    const uploading = ref(false)
+    const files = reactive({ input: [], output: [] })
+    const jobs = ref([])
+    const editing = ref(null)
+    const mdContent = ref("")
+    const transcribeOpts = reactive({ whisperModel: "tiny", lang: "ko" })
+
+    const canStartTranscribe = (f) =>
+      /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f)
+    const hasSubtitle = (f) => {
+      const base = f.replace(/\.[^.]+$/, "")
+      return files.input.includes(base + ".md")
+    }
+
+    async function loadFiles() {
+      files.input = []
+      files.output = []
+      const r = await fetch("/api/files").then(r => r.json())
+      files.input = r.input || []
+      files.output = r.output || []
+    }
+
+    async function loadJobs() {
+      jobs.value = await fetch("/api/jobs").then(r => r.json())
+    }
+
+    async function doUpload() {
+      if (!selectedFile.value) return
+      uploading.value = true
+      const fd = new FormData()
+      fd.append("video", selectedFile.value)
+      await fetch("/api/upload", { method: "POST", body: fd })
+      uploading.value = false
+      selectedFile.value = null
+      loadFiles()
+    }
+
+    async function startTranscribe(filename) {
+      await fetch("/api/jobs/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename, ...transcribeOpts }),
+      })
+      loadJobs()
+    }
+
+    async function openEditor(filename) {
+      const base = filename.replace(/\.[^.]+$/, "")
+      const md = await fetch(`/api/input/${base}.md`).then(r => r.text())
+      mdContent.value = md
+      editing.value = filename
+    }
+
+    async function doCut() {
+      await fetch("/api/jobs/cut", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: editing.value,
+          mdContent: mdContent.value,
+        }),
+      })
+      editing.value = null
+      loadJobs()
+    }
+
+    let timer
+    onMounted(() => {
+      loadFiles()
+      loadJobs()
+      timer = setInterval(() => { loadFiles(); loadJobs() }, 3000)
+    })
+    onUnmounted(() => clearInterval(timer))
+
+    return {
+      selectedFile, uploading, files, jobs, editing, mdContent,
+      transcribeOpts, canStartTranscribe, hasSubtitle,
+      doUpload, startTranscribe, openEditor, doCut,
+    }
+  }
+}).mount("#app")
+</script>
+</body>
+</html>
