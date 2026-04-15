@@ -20,8 +20,28 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FRONTEND_DIR = path.resolve(__dirname, "../../frontend/public")
 
+import { isActivated, activate } from "./license.js"
+
 const app = express()
 app.use(express.json({ limit: "10mb" }))
+
+// 라이선스 게이트 — activate 전에는 API 차단 (frontend + /api/license만 허용)
+app.use(async (req, res, next) => {
+  if (req.path === "/api/license" || !req.path.startsWith("/api/")) return next()
+  if (await isActivated()) return next()
+  res.status(402).json({ error: "license_required" })
+})
+
+app.get("/api/license", async (_req, res) => {
+  res.json({ activated: await isActivated() })
+})
+app.post("/api/license", async (req, res) => {
+  const code = req.body?.code
+  if (typeof code !== "string" || code.length < 16) return res.status(400).json({ error: "invalid code" })
+  const r = await activate(code)
+  if (!r.ok) return res.status(400).json({ error: r.error })
+  res.json({ ok: true })
+})
 
 app.get("/api/projects", async (_req, res) => {
   res.json(await listProjects())

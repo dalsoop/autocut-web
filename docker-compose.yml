@@ -1,0 +1,30 @@
+services:
+  autocut:
+    build: .
+    image: autocut-web:latest
+    container_name: autocut
+    restart: unless-stopped
+    ports:
+      - "${AUTOCUT_PORT:-8080}:8080"
+    environment:
+      AUTOCUT_WORKSPACE: /workspace
+      AUTOCUT_CONFIG: /app/config.json
+      HF_HOME: /app/models
+    volumes:
+      # 영상 작업 공간 — 호스트의 프로젝트 폴더 마운트
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      # Qwen3-ASR 모델 캐시 (초기 다운로드 5GB)
+      - autocut-models:/app/models
+      # 설정 파일 영속화
+      - autocut-config:/app/config
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  autocut-models:
+  autocut-config:

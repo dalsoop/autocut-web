@@ -4,12 +4,18 @@ import { promises as fs } from "fs"
 import path from "path"
 import type { JobStatus, FileInfo, SubtitleData, SubtitleLine } from "./types.js"
 
+// 모든 경로는 환경변수로 override 가능 (Envato 배포용)
 const AUTOCUT_BIN = process.env.AUTOCUT_BIN || "/opt/autocut/venv/bin/autocut"
-const SYNOLOGY_DIR = process.env.AUTOCUT_SYNOLOGY || "/mnt/video"
-const PROJECTS_ROOT = path.join(SYNOLOGY_DIR, "10_진행중")
+const QWEN3_SCRIPT = process.env.QWEN3_SCRIPT || "/opt/autocut/qwen3-transcribe.py"
+const QWEN3_PYTHON = process.env.QWEN3_PYTHON || "/opt/autocut/venv/bin/python"
+const HF_HOME = process.env.HF_HOME || "/opt/autocut/models"
+const WORKSPACE_ROOT = process.env.AUTOCUT_WORKSPACE || process.env.AUTOCUT_SYNOLOGY || "/mnt/video"
+const PROJECTS_SUBDIR = process.env.AUTOCUT_PROJECTS_SUBDIR || "10_진행중"
+const PROJECTS_ROOT = path.join(WORKSPACE_ROOT, PROJECTS_SUBDIR)
+const SYNOLOGY_DIR = WORKSPACE_ROOT  // legacy alias
 const CONFIG_FILE = process.env.AUTOCUT_CONFIG || "/opt/autocut/autocut-web-config.json"
 
-export { SYNOLOGY_DIR, PROJECTS_ROOT }
+export { SYNOLOGY_DIR, PROJECTS_ROOT, WORKSPACE_ROOT }
 
 export type AppConfig = {
   activeProject: string
@@ -227,10 +233,10 @@ async function runTranscribe(
   const _jobId = job.id
 
   const p = engine === "qwen3"
-    ? spawn("/opt/autocut/venv/bin/python", [
-        "/opt/autocut/qwen3-transcribe.py", filepath,
+    ? spawn(QWEN3_PYTHON, [
+        QWEN3_SCRIPT, filepath,
         "--lang", lang, "--device", cfg.qwen3Device,
-      ], { cwd: path.dirname(filepath), env: { ...process.env, HF_HOME: "/opt/autocut/models" } })
+      ], { cwd: path.dirname(filepath), env: { ...process.env, HF_HOME } })
     : spawn(AUTOCUT_BIN, [
         "-t", filepath,
         "--whisper-model", whisperModel,
