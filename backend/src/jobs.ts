@@ -40,9 +40,19 @@ async function getProjectDir(): Promise<string> {
 }
 
 const jobs = new Map<string, JobStatus>()
+const jobProcesses = new Map<string, import("child_process").ChildProcess>()
 export function getJob(id: string) { return jobs.get(id) }
 export function listJobs() {
   return [...jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+export function cancelJob(id: string): boolean {
+  const p = jobProcesses.get(id)
+  if (!p) return false
+  p.kill("SIGTERM")
+  const job = jobs.get(id)
+  if (job) { job.status = "failed"; job.message = "취소됨"; job.finishedAt = new Date().toISOString() }
+  jobProcesses.delete(id)
+  return true
 }
 
 function makeJob(type: JobStatus["type"], filename: string): JobStatus {
@@ -133,6 +143,7 @@ export async function transcribe(filename: string, whisperModel = "tiny", lang =
   const job = makeJob("transcribe", filename)
   job.status = "running"
   job.progress = 0
+  const _jobId = job.id
 
   const p = engine === "qwen3"
     ? spawn("/opt/autocut/venv/bin/python", [
@@ -145,6 +156,7 @@ export async function transcribe(filename: string, whisperModel = "tiny", lang =
         "--lang", lang,
         "--device", "cpu",
       ], { cwd: path.dirname(filepath) })
+  jobProcesses.set(_jobId, p)
 
   const handle = (d: any) => {
     const line = String(d)
@@ -166,6 +178,8 @@ export async function transcribe(filename: string, whisperModel = "tiny", lang =
   p.stdout.on("data", handle)
   p.stderr.on("data", handle)
   p.on("close", async (code) => {
+    jobProcesses.delete(_jobId)
+    if (job.status === "failed") return  // 이미 취소 처리됨
     job.finishedAt = new Date().toISOString()
     if (code === 0) {
       job.status = "done"
@@ -265,6 +279,7 @@ export async function cut(filename: string, keepIndices: number[]) {
   job.progress = 0
 
   const p = spawn(AUTOCUT_BIN, ["-c", filepath, srtPath, mdPath], { cwd: dir })
+  jobProcesses.set(job.id, p)
   p.stderr.on("data", (d) => {
     const line = String(d)
     const m = line.match(/(\d+)%/)
@@ -272,6 +287,8 @@ export async function cut(filename: string, keepIndices: number[]) {
     job.message = line.trim().slice(-200)
   })
   p.on("close", async (code) => {
+    jobProcesses.delete(job.id)
+    if (job.status === "failed") return
     job.finishedAt = new Date().toISOString()
     if (code === 0) {
       const srcCut = path.join(dir, `${fileBase}_cut.mp4`)

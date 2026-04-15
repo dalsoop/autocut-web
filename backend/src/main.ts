@@ -8,7 +8,7 @@ import {
   stringifyStatus, stringifyFiles, stringifySubtitle, stringifySynology,
 } from "./types.js"
 import {
-  transcribe, cut, getJob, listJobs, listFiles,
+  transcribe, cut, getJob, listJobs, listFiles, cancelJob,
   getSubtitle, listSynology,
   listProjects, loadConfig, saveConfig,
   PROJECTS_ROOT, resolveAbsolute,
@@ -105,6 +105,12 @@ app.get("/api/jobs/:id", (req, res) => {
   const job = getJob(req.params.id)
   if (!job) return res.status(404).json({ error: "not found" })
   res.type("application/json").send(stringifyStatus(job))
+})
+
+app.post("/api/jobs/:id/cancel", (req, res) => {
+  const ok = cancelJob(req.params.id)
+  if (!ok) return res.status(404).json({ error: "not running" })
+  res.json({ ok: true })
 })
 
 app.get("/api/jobs", (_req, res) => res.json(listJobs()))
