@@ -138,7 +138,16 @@ export async function listFiles() {
       // output 메타
       const metaPath = path.join(root, f.name + ".json")
       const meta = await fs.readFile(metaPath, "utf-8").then(s => JSON.parse(s)).catch(() => null)
-      output.push({ ...f, source: meta?.source, createdAt: meta?.createdAt })
+      output.push({
+        ...f,
+        source: meta?.source,
+        createdAt: meta?.createdAt,
+        engine: meta?.transcribe?.engine,
+        lang: meta?.transcribe?.lang,
+        whisperModel: meta?.transcribe?.whisperModel,
+        keptCount: meta?.keptCount,
+        totalCount: meta?.totalCount,
+      } as any)
     } else {
       input.push(f)
     }
@@ -218,6 +227,15 @@ export async function transcribe(filename: string, whisperModel?: string, lang?:
           job.outputs.push(path.basename(base + ext))
         }
       }
+      // SRT 메타 사이드카: 어떤 엔진/모델/언어로 만들어졌는지 기록
+      const meta = {
+        engine, lang,
+        whisperModel: engine === "whisper" ? whisperModel : undefined,
+        qwen3Device: engine === "qwen3" ? cfg.qwen3Device : undefined,
+        createdAt: job.finishedAt,
+      }
+      await fs.writeFile(base + ".srt.meta.json",
+        JSON.stringify(meta, null, 2), "utf-8").catch(() => {})
     } else {
       job.status = "failed"
       job.message = `exit ${code}: ${job.message}`
@@ -323,9 +341,19 @@ export async function cut(filename: string, keepIndices: number[]) {
       const dstName = `${fileBase}_cut_${ts}.mp4`
       const dst = path.join(dir, dstName)
       await fs.rename(srcCut, dst).catch(() => {})
+      // SRT 메타 읽어서 결과에 포함
+      const srtMeta = await fs.readFile(base + ".srt.meta.json", "utf-8")
+        .then(s => JSON.parse(s)).catch(() => null)
       await fs.writeFile(
         dst + ".json",
-        JSON.stringify({ source: filename, keepIndices, createdAt: job.finishedAt }, null, 2)
+        JSON.stringify({
+          source: filename,
+          keepIndices,
+          keptCount: keepIndices.length,
+          totalCount: lines.length,
+          transcribe: srtMeta || null,  // 어떤 엔진으로 자막 만들었나
+          createdAt: job.finishedAt,
+        }, null, 2)
       ).catch(() => {})
       const relDir = path.relative(path.join(PROJECTS_ROOT, (await loadConfig()).activeProject), dir)
       const relDst = relDir ? `${relDir}/${dstName}` : dstName

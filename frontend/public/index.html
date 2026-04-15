@@ -145,6 +145,11 @@
             <div class="output-meta">
               <div class="output-title" :title="o.name">{{ o.label }}</div>
               <div class="muted" style="font-size:.75rem">{{ formatSize(o.size) }} · {{ formatLocalTime(o.createdAt) }}</div>
+              <div v-if="o.engine" style="display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.3rem">
+                <span class="stat-chip" style="padding:.15rem .4rem; font-size:.7rem">{{ o.engine === 'qwen3' ? 'Qwen3-ASR' : 'Whisper' + (o.whisperModel ? '/' + o.whisperModel : '') }}</span>
+                <span class="stat-chip" style="padding:.15rem .4rem; font-size:.7rem" v-if="o.lang">{{ o.lang }}</span>
+                <span class="stat-chip" style="padding:.15rem .4rem; font-size:.7rem" v-if="o.keptCount!==undefined">{{ o.keptCount }}/{{ o.totalCount }} 유지</span>
+              </div>
               <div style="display:flex; gap:.4rem; margin-top:.4rem">
                 <a class="button-link sm" :href="`/api/media/${encodePath(o.name)}`" :download="o.name">⬇ 다운로드</a>
                 <button class="sm danger" @click="deleteOutput(o.name)">삭제</button>

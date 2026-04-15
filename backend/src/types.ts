@@ -53,6 +53,11 @@ export interface FileInfo {
   createdAt?: string
   remote?: boolean
   remotePath?: string
+  engine?: string
+  lang?: string
+  whisperModel?: string
+  keptCount?: number
+  totalCount?: number
 }
 
 export interface AppConfig {
