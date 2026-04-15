@@ -145,6 +145,91 @@ async function walkVideos(root: string, rel = ""): Promise<FileInfo[]> {
   return out
 }
 
+/** 프로젝트 CRUD */
+export async function createProject(name: string): Promise<void> {
+  if (!/^[\w가-힣][\w가-힣_\- ]*$/.test(name)) throw new Error("프로젝트 이름 형식 오류")
+  await fs.mkdir(path.join(PROJECTS_ROOT, name), { recursive: true })
+}
+
+export async function renameProject(oldName: string, newName: string): Promise<void> {
+  if (!/^[\w가-힣][\w가-힣_\- ]*$/.test(newName)) throw new Error("이름 형식 오류")
+  await fs.rename(path.join(PROJECTS_ROOT, oldName), path.join(PROJECTS_ROOT, newName))
+  const cfg = await loadConfig()
+  if (cfg.activeProject === oldName) await saveConfig({ activeProject: newName })
+}
+
+export async function archiveProject(name: string): Promise<void> {
+  // 40_아카이브/완료프로젝트/ 로 mv (같은 volume 가정 → instant)
+  const archiveDir = path.join(WORKSPACE_ROOT, "40_아카이브", "완료프로젝트")
+  await fs.mkdir(archiveDir, { recursive: true })
+  await fs.rename(path.join(PROJECTS_ROOT, name), path.join(archiveDir, name))
+  const cfg = await loadConfig()
+  if (cfg.activeProject === name) await saveConfig({ activeProject: "" })
+}
+
+/** 파일 조작 */
+export async function renameFile(relPath: string, newName: string): Promise<void> {
+  if (newName.includes("/") || newName.includes("..")) throw new Error("invalid name")
+  const abs = await resolveInput(relPath)
+  const dir = path.dirname(abs)
+  const oldBase = abs.replace(/\.[^.]+$/, "")
+  const ext = path.extname(abs)
+  const newBase = path.join(dir, newName.replace(/\.[^.]+$/, ""))
+  const newAbs = newBase + ext
+  await fs.rename(abs, newAbs)
+  // 자막/메타/버전폴더/output json도 함께
+  for (const sfx of [".srt", ".md", ".srt.meta.json", ".vtt", ".json"]) {
+    await fs.rename(oldBase + sfx, newBase + sfx).catch(() => {})
+  }
+  await fs.rename(oldBase + "_subs", newBase + "_subs").catch(() => {})
+}
+
+/** 트리 구조 (디렉토리별 그룹핑) */
+export async function listTree(): Promise<any> {
+  const cfg = await loadConfig()
+  if (!cfg.activeProject) return { name: "", path: "", type: "dir", children: [] }
+  const root = path.join(PROJECTS_ROOT, cfg.activeProject)
+  async function walk(abs: string, rel: string): Promise<any> {
+    const st = await fs.stat(abs).catch(() => null)
+    if (!st) return null
+    if (st.isDirectory()) {
+      const names = await fs.readdir(abs).catch(() => [])
+      const children = []
+      for (const n of names) {
+        if (n.startsWith(".") || n === "@eaDir" || n === "#recycle" || n.endsWith("_subs") ||
+            n.endsWith(".srt") || n.endsWith(".md") || n.endsWith(".json") || n.endsWith(".vtt")) continue
+        const child = await walk(path.join(abs, n), rel ? `${rel}/${n}` : n)
+        if (child) children.push(child)
+      }
+      children.sort((a: any, b: any) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1
+        return a.name.localeCompare(b.name, "ko")
+      })
+      return { name: path.basename(abs), path: rel, type: "dir", children }
+    }
+    // 파일
+    const low = abs.toLowerCase()
+    if (!VIDEO_EXT.test(low) && !AUDIO_EXT.test(low)) return null
+    const base = abs.replace(/\.[^.]+$/, "")
+    const hasSubtitle = await fs.access(base + ".srt").then(() => true).catch(() => false)
+    const dir = path.dirname(abs)
+    const fileBase = path.basename(base)
+    const sibs = await fs.readdir(dir).catch(() => [])
+    const outputs = sibs.filter(s =>
+      !s.endsWith(".json") && (s === `${fileBase}_cut.mp4` || s.startsWith(`${fileBase}_cut_`))
+    )
+    return {
+      name: path.basename(abs), path: rel, type: "file",
+      size: st.size,
+      file: {
+        name: rel, size: st.size, type: "video",
+        hasSubtitle, hasOutput: outputs.length > 0, outputs,
+      },
+    }
+  }
+  return await walk(root, "")
+}
+
 export async function listFiles() {
   const cfg = await loadConfig()
   if (!cfg.activeProject) return { input: [], output: [] }

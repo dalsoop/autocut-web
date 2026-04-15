@@ -85,26 +85,26 @@
       <label style="font-size:.75rem;color:var(--muted);flex:1">활성 프로젝트</label>
       <button class="sm" @click="showSettings=true" title="설정">⚙</button>
     </div>
-    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.5rem">
+    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.3rem">
       <option value="" disabled>프로젝트 선택</option>
       <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
     </select>
+    <div style="display:flex;gap:.2rem;margin-bottom:.5rem">
+      <button class="sm" style="flex:1" @click="newProject" title="새 프로젝트">＋</button>
+      <button class="sm" style="flex:1" @click="renameActiveProject" :disabled="!activeProject" title="이름 변경">✏</button>
+      <button class="sm danger" style="flex:1" @click="archiveActiveProject" :disabled="!activeProject" title="아카이브로 이동">🗄</button>
+    </div>
     <button class="sm" style="width:100%; margin-bottom:.75rem" @click="batchTranscribe" :disabled="pendingCount===0">
       🎬 미추출 전체 자막 추출 ({{ pendingCount }})
     </button>
 
-    <h2>입력 파일 ({{ files.input.length }})</h2>
-    <div v-if="files.input.length" style="margin: 0 -.4rem;">
-      <div v-for="f in files.input" :key="f.name"
-           class="file-item" :class="{ active: selected?.name === f.name }"
-           @click="selectFile(f)">
-        <span>🎥</span>
-        <span class="file-name" :title="f.name">{{ f.name }}</span>
-        <span v-if="f.hasSubtitle" class="file-badge ok" title="자막 있음">✓</span>
-        <span v-if="f.hasOutput" class="file-badge ok" title="편집본">✂</span>
-      </div>
+    <h2>파일 트리</h2>
+    <div v-if="tree && tree.children?.length" style="margin: 0 -.4rem; font-size:.85rem">
+      <tree-node v-for="c in tree.children" :key="c.path" :node="c" :selected="selected"
+                 :expanded-paths="expandedPaths" @select="selectFile" @toggle="toggleExpand"
+                 @rename="renameItem"></tree-node>
     </div>
-    <p v-else class="empty">없음</p>
+    <p v-else class="empty">프로젝트를 선택하세요</p>
 
     <h2>작업 ({{ activeJobs.length }})</h2>
     <div v-for="j in activeJobs" :key="j.id" class="job-item" @click="viewJobLog(j)" style="cursor:pointer">
@@ -327,7 +327,39 @@
 <script>
 const { createApp, reactive, ref, computed, onMounted, onUnmounted, watch } = Vue
 
+const TreeNode = {
+  name: "tree-node",
+  props: ["node", "selected", "expandedPaths"],
+  emits: ["select", "toggle", "rename"],
+  template: `
+    <div>
+      <div v-if="node.type==='dir'">
+        <div class="file-item" style="font-weight:500" @click="$emit('toggle', node.path)">
+          <span>{{ expandedPaths.has(node.path) ? '📂' : '📁' }}</span>
+          <span class="file-name" :title="node.name">{{ node.name }}</span>
+          <span class="muted" style="font-size:.7rem">{{ node.children?.length || 0 }}</span>
+        </div>
+        <div v-if="expandedPaths.has(node.path)" style="margin-left:.75rem; border-left:1px solid var(--border); padding-left:.25rem">
+          <tree-node v-for="c in node.children" :key="c.path" :node="c" :selected="selected"
+                     :expanded-paths="expandedPaths" @select="$emit('select', $event)"
+                     @toggle="$emit('toggle', $event)" @rename="$emit('rename', $event)"></tree-node>
+        </div>
+      </div>
+      <div v-else class="file-item" :class="{ active: selected?.name === node.file?.name }"
+           @click="$emit('select', node.file)"
+           @contextmenu.prevent="$emit('rename', node.file)"
+           :title="'우클릭: 이름변경'">
+        <span>🎥</span>
+        <span class="file-name">{{ node.name }}</span>
+        <span v-if="node.file?.hasSubtitle" class="file-badge ok" title="자막 있음">✓</span>
+        <span v-if="node.file?.hasOutput" class="file-badge ok" title="편집본">✂</span>
+      </div>
+    </div>
+  `,
+}
+
 createApp({
+  components: { TreeNode },
   setup() {
     const files = reactive({ input: [], output: [] })
     const jobs = ref([])
@@ -358,6 +390,8 @@ createApp({
     const jobLogOpen = ref(null)
     const jobLogText = ref("")
     const subtitleVersion = ref(Date.now())  // 자막 변경 시 video <track> 캐시 버스팅
+    const tree = ref(null)
+    const expandedPaths = reactive(new Set())
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
     function setEditInput(el) { if (el) editInput.value = el }
 
@@ -443,7 +477,8 @@ createApp({
         body: JSON.stringify({ activeProject: activeProject.value }),
       })
       selected.value = null; subtitle.value = null
-      await loadFiles()
+      expandedPaths.clear()
+      await loadFiles(); await loadTree()
     }
 
     function seek(t) { const v = videoEl.value; if (v) { v.currentTime = t; v.play() } }
@@ -499,6 +534,60 @@ createApp({
     }
     async function loadPending() {
       pendingCount.value = (await fetch("/api/pending").then(r => r.json()).catch(() => [])).length
+    }
+    async function loadTree() {
+      tree.value = await fetch("/api/tree").then(r => r.json()).catch(() => null)
+    }
+    function toggleExpand(p) {
+      if (expandedPaths.has(p)) expandedPaths.delete(p)
+      else expandedPaths.add(p)
+    }
+    async function newProject() {
+      const name = prompt("프로젝트 이름 (예: 2604_강의_xxx):")
+      if (!name) return
+      const r = await fetch("/api/projects", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      })
+      if (!r.ok) { alert("실패: " + (await r.json()).error); return }
+      await loadProjects()
+      activeProject.value = name
+      await onProjectChange()
+    }
+    async function renameActiveProject() {
+      const oldName = activeProject.value
+      const newName = prompt("새 프로젝트 이름:", oldName)
+      if (!newName || newName === oldName) return
+      const r = await fetch(`/api/projects/${encodeURIComponent(oldName)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      })
+      if (!r.ok) { alert("실패: " + (await r.json()).error); return }
+      await loadProjects()
+      activeProject.value = newName
+    }
+    async function archiveActiveProject() {
+      const name = activeProject.value
+      if (!confirm(`"${name}" 프로젝트를 40_아카이브/완료프로젝트/ 로 이동?`)) return
+      const r = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" })
+      if (!r.ok) { alert("실패: " + (await r.json()).error); return }
+      await loadProjects()
+      activeProject.value = ""
+      selected.value = null
+      subtitle.value = null
+      tree.value = null
+    }
+    async function renameItem(f) {
+      const cur = f.name.split("/").pop()
+      const newName = prompt("새 파일 이름 (확장자 제외):", cur.replace(/\.[^.]+$/, ""))
+      if (!newName) return
+      const r = await fetch(`/api/files/rename/${encodePath(f.name)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      })
+      if (!r.ok) { alert("실패: " + (await r.json()).error); return }
+      await loadFiles()
+      await loadTree()
     }
 
     function previewCut() {
@@ -654,8 +743,9 @@ createApp({
     onMounted(async () => {
       await loadProjects()
       loadFiles(); loadJobs(); loadPending()
+      if (activeProject.value) await loadTree()
       timer = setInterval(async () => {
-        await loadFiles(); await loadJobs(); await loadPending()
+        await loadFiles(); await loadJobs(); await loadPending(); await loadTree()
         if (selected.value) {
           const f = files.input.find(x => x.name === selected.value.name)
           if (f && f.hasSubtitle && !subtitle.value?.hasSrt) await reloadSubtitle()
@@ -679,6 +769,8 @@ createApp({
       editingIndex, editingText, editInput, setEditInput, startEdit, saveEdit,
       splitAt, mergeWithNext, nudge, searchTerm, filteredLines,
       jobLogOpen, jobLogText, viewJobLog, subtitleVersion,
+      tree, expandedPaths, loadTree, toggleExpand,
+      newProject, renameActiveProject, archiveActiveProject, renameItem,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }

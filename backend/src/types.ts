@@ -76,6 +76,15 @@ export interface FileListResponse {
   output: FileInfo[]
 }
 
+export interface TreeNode {
+  name: string
+  path: string
+  type: "dir" | "file"
+  size?: number
+  file?: FileInfo
+  children?: TreeNode[]
+}
+
 export interface SynologyEntry {
   name: string
   path: string

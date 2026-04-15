@@ -14,6 +14,7 @@ import {
   listPendingTranscribe,
   editLines, splitLine, mergeNext, getVtt, nudgeLine,
   listSubtitleVersions, activateSubtitleVersion,
+  createProject, renameProject, archiveProject, renameFile, listTree,
   PROJECTS_ROOT, resolveAbsolute,
 } from "./jobs.js"
 
@@ -45,6 +46,31 @@ app.post("/api/license", async (req, res) => {
 
 app.get("/api/projects", async (_req, res) => {
   res.json(await listProjects())
+})
+app.post("/api/projects", async (req, res) => {
+  try { await createProject(req.body?.name); res.json({ ok: true }) }
+  catch (e: any) { res.status(400).json({ error: e.message }) }
+})
+app.patch("/api/projects/:name", async (req, res) => {
+  try { await renameProject(req.params.name, req.body?.name); res.json({ ok: true }) }
+  catch (e: any) { res.status(400).json({ error: e.message }) }
+})
+app.delete("/api/projects/:name", async (req, res) => {
+  try { await archiveProject(req.params.name); res.json({ ok: true }) }
+  catch (e: any) { res.status(400).json({ error: e.message }) }
+})
+
+app.get("/api/tree", async (_req, res) => {
+  try { res.json(await listTree()) }
+  catch (e: any) { res.status(400).json({ error: e.message }) }
+})
+
+app.patch("/api/files/rename/*", async (req, res) => {
+  try {
+    const rel = decodeURIComponent((req.params as any)[0])
+    await renameFile(rel, req.body?.name)
+    res.json({ ok: true })
+  } catch (e: any) { res.status(400).json({ error: e.message }) }
 })
 
 app.get("/api/config", async (_req, res) => {
