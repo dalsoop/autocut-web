@@ -17,6 +17,7 @@ export interface JobStatus {
   outputs?: string[]
   createdAt: string
   finishedAt?: string
+  log?: string[]  // 전체 stdout/stderr 청크들 (최대 500개)
 }
 
 export interface CutRequest {
@@ -40,6 +41,10 @@ export interface SubtitleData {
   totalDuration: number
   hasSrt: boolean
   hasMd: boolean
+  engine?: string
+  whisperModel?: string
+  lang?: string
+  createdAt?: string
 }
 
 export interface FileInfo {

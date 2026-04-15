@@ -12,7 +12,7 @@ import {
   getSubtitle, listSynology,
   listProjects, loadConfig, saveConfig,
   listPendingTranscribe,
-  editLines, splitLine, mergeNext, getVtt,
+  editLines, splitLine, mergeNext, getVtt, nudgeLine,
   listSubtitleVersions, activateSubtitleVersion,
   PROJECTS_ROOT, resolveAbsolute,
 } from "./jobs.js"
@@ -82,8 +82,27 @@ app.delete("/api/media/*", async (req, res) => {
   try {
     const rel = decodeURIComponent((req.params as any)[0])
     const abs = await resolveAbsolute(rel)
+    // 원본 영상 삭제 시 연관 파일 전부 정리
+    const base = abs.replace(/\.[^.]+$/, "")
+    const fileBase = path.basename(base)
+    const dir = path.dirname(abs)
+    const isOriginal = !fileBase.includes("_cut")
     await fs.unlink(abs).catch(() => {})
     await fs.unlink(abs + ".json").catch(() => {})
+    if (isOriginal) {
+      // 자막/메타/버전폴더/MD 전부
+      for (const ext of [".srt", ".md", ".srt.meta.json", ".vtt"]) {
+        await fs.unlink(base + ext).catch(() => {})
+      }
+      await fs.rm(base + "_subs", { recursive: true, force: true }).catch(() => {})
+      // 같은 폴더의 이 원본에서 파생된 _cut_ 결과물들
+      const names = await fs.readdir(dir).catch(() => [])
+      for (const n of names) {
+        if (n.startsWith(fileBase + "_cut_")) {
+          await fs.unlink(path.join(dir, n)).catch(() => {})
+        }
+      }
+    }
     res.json({ ok: true })
   } catch (e: any) {
     res.status(400).json({ error: e.message })
@@ -125,6 +144,10 @@ app.patch("/api/subtitle/*", async (req, res) => {
     }
     if (b.action === "merge" && typeof b.index === "number") {
       await mergeNext(filename, b.index)
+      return res.json({ ok: true })
+    }
+    if (b.action === "nudge" && typeof b.index === "number") {
+      await nudgeLine(filename, b.index, Number(b.deltaStart) || 0, Number(b.deltaEnd) || 0)
       return res.json({ ok: true })
     }
     res.status(400).json({ error: "invalid body" })
@@ -182,7 +205,15 @@ app.post("/api/subtitle-activate/*", async (req, res) => {
 app.get("/api/jobs/:id", (req, res) => {
   const job = getJob(req.params.id)
   if (!job) return res.status(404).json({ error: "not found" })
-  res.type("application/json").send(stringifyStatus(job))
+  // stringifyStatus는 log 필드 제외 (용량 감소)
+  const { log, ...rest } = job as any
+  res.type("application/json").send(stringifyStatus(rest))
+})
+
+app.get("/api/jobs/:id/log", (req, res) => {
+  const job = getJob(req.params.id)
+  if (!job) return res.status(404).json({ error: "not found" })
+  res.type("text/plain").send((job.log || []).join(""))
 })
 
 app.post("/api/jobs/:id/cancel", (req, res) => {

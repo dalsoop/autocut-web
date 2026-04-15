@@ -71,6 +71,8 @@ const jobs = new Map<string, JobStatus>()
 const jobProcesses = new Map<string, import("child_process").ChildProcess>()
 // Transcribe 순차 처리 (GPU OOM 방지)
 let transcribeQueue: Promise<void> = Promise.resolve()
+// Cut도 직렬 (ffmpeg 여러 개 동시 IO/CPU 과부하 방지)
+let cutQueue: Promise<void> = Promise.resolve()
 export function getJob(id: string) { return jobs.get(id) }
 export function listJobs() {
   return [...jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -237,8 +239,11 @@ async function runTranscribe(
       ], { cwd: path.dirname(filepath) })
   jobProcesses.set(_jobId, p)
 
+  job.log = []
   const handle = (d: any) => {
     const line = String(d)
+    job.log!.push(line)
+    if (job.log!.length > 500) job.log!.shift()
     if (engine === "qwen3") {
       if (line.includes("loading")) job.progress = 10
       if (line.includes("loaded")) job.progress = 40
@@ -367,6 +372,21 @@ export async function editLines(filename: string, edits: { index: number; text: 
       if (typeof e.kept === "boolean") l.kept = e.kept
     }
   }
+  await writeSrt(base + ".srt", lines)
+  await writeMd(base, path.basename(filepath), lines)
+  return lines
+}
+
+/** 타임스탬프 nudge (start/end 조정) */
+export async function nudgeLine(filename: string, index: number, deltaStart: number, deltaEnd: number) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await loadWithKept(base)
+  const l = lines.find(x => x.index === index)
+  if (!l) throw new Error("line not found")
+  l.start = Math.max(0, l.start + deltaStart)
+  l.end = Math.max(l.start + 0.05, l.end + deltaEnd)
+  l.duration = +(l.end - l.start).toFixed(2)
   await writeSrt(base + ".srt", lines)
   await writeMd(base, path.basename(filepath), lines)
   return lines
@@ -522,10 +542,30 @@ export async function getSubtitle(filename: string): Promise<SubtitleData> {
     if (kept.size > 0) for (const l of lines) l.kept = kept.has(l.index)
   }
   const total = lines.reduce((s, l) => s + l.duration, 0)
-  return { filename, lines, totalDuration: +total.toFixed(2), hasSrt, hasMd }
+  const meta = await fs.readFile(base + ".srt.meta.json", "utf-8")
+    .then(s => JSON.parse(s)).catch(() => null)
+  return {
+    filename, lines, totalDuration: +total.toFixed(2), hasSrt, hasMd,
+    engine: meta?.engine, whisperModel: meta?.whisperModel,
+    lang: meta?.lang, createdAt: meta?.createdAt,
+  }
 }
 
 export async function cut(filename: string, keepIndices: number[], label?: string) {
+  const job = makeJob("cut", filename)
+  job.status = "queued"
+  job.progress = 0
+  cutQueue = cutQueue.then(() =>
+    runCut(job, filename, keepIndices, label).catch(e => {
+      job.status = "failed"
+      job.message = String(e?.message || e)
+      job.finishedAt = new Date().toISOString()
+    })
+  )
+  return job
+}
+
+async function runCut(job: JobStatus, filename: string, keepIndices: number[], label?: string): Promise<void> {
   const filepath = await resolveInput(filename)
   const base = filepath.replace(/\.[^.]+$/, "")
   const srtPath = base + ".srt"
@@ -546,18 +586,23 @@ export async function cut(filename: string, keepIndices: number[], label?: strin
   }).join("\n")
   await fs.writeFile(mdPath, mdHeader + mdBody, "utf-8")
 
-  const job = makeJob("cut", filename)
   job.status = "running"
   job.progress = 0
+  job.log = []
 
   const p = spawn(AUTOCUT_BIN, ["-c", filepath, srtPath, mdPath], { cwd: dir })
   jobProcesses.set(job.id, p)
-  p.stderr.on("data", (d) => {
-    const line = String(d)
-    const m = line.match(/(\d+)%/)
+  const collect = (d: any) => {
+    const s = String(d)
+    job.log!.push(s)
+    if (job.log!.length > 500) job.log!.shift()
+    const m = s.match(/(\d+)%/)
     if (m) job.progress = parseInt(m[1])
-    job.message = line.trim().slice(-200)
-  })
+    job.message = s.trim().slice(-200)
+  }
+  p.stdout.on("data", collect)
+  p.stderr.on("data", collect)
+  await new Promise<void>((resolve) => {
   p.on("close", async (code) => {
     jobProcesses.delete(job.id)
     if (job.status === "failed") return
@@ -592,8 +637,9 @@ export async function cut(filename: string, keepIndices: number[], label?: strin
       job.status = "failed"
       job.message = `exit ${code}: ${job.message}`
     }
+    resolve()
   })
-  return job
+  })
 }
 
 /** Synology 브라우저 (10_진행중 하위만) */
