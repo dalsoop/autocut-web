@@ -158,6 +158,12 @@ export async function transcribe(filename: string, whisperModel?: string, lang?:
   engine = engine || cfg.defaultEngine
   lang = lang || cfg.defaultLang
   whisperModel = whisperModel || cfg.defaultWhisperModel
+
+  // 재추출 시 기존 SRT/MD 삭제 (autocut CLI가 기존 파일에 민감)
+  const filepath2 = await resolveInput(filename)
+  const base2 = filepath2.replace(/\.[^.]+$/, "")
+  await fs.unlink(base2 + ".srt").catch(() => {})
+  await fs.unlink(base2 + ".md").catch(() => {})
   const filepath = await resolveInput(filename)
   await fs.access(filepath).catch(() => { throw new Error(`not found: ${filename}`) })
 

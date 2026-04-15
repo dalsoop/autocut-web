@@ -184,6 +184,7 @@
           <button class="sm" @click="selectAll(true)">모두 유지</button>
           <button class="sm" @click="selectAll(false)">모두 제거</button>
           <button class="sm" @click="invertSelection">반전</button>
+          <button class="sm" @click="reTranscribe" title="현재 자막 삭제 후 재추출">🔄 재추출</button>
           <button class="primary" @click="startCut" :disabled="keptCount===0">✂️ 컷 편집</button>
         </div>
         <div class="subtitle-list">
@@ -380,6 +381,15 @@ createApp({
       })
       await loadJobs()
     }
+    async function reTranscribe() {
+      if (!confirm(`${selected.value.name}\n현재 자막(SRT/MD) 삭제하고 다시 추출?`)) return
+      subtitle.value = null
+      await fetch("/api/jobs/transcribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: selected.value.name, ...transcribeOpts }),
+      })
+      await loadJobs()
+    }
     async function startCut() {
       const keepIndices = subtitle.value.lines.filter(l => l.kept).map(l => l.index)
       await fetch("/api/jobs/cut", {
@@ -457,7 +467,7 @@ createApp({
       keptCount, cutCount, keptDuration, outputList,
       deleteOutput, formatLocalTime,
       selectFile, deleteFile, seek, selectAll, invertSelection,
-      onFileSelect, onDrop, startTranscribe, startCut,
+      onFileSelect, onDrop, startTranscribe, reTranscribe, startCut,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }
