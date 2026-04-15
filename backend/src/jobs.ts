@@ -171,13 +171,15 @@ export async function cut(filename: string, keepIndices: number[]) {
   // autocut MD 포맷으로 생성: kept만 [N,duration] 유지
   const lines = await parseSrt(srtPath)
   const keepSet = new Set(keepIndices)
-  const mdHeader = `- [x] <-- Mark if you are done editing.\n\n<video controls="true" allowfullscreen="true"> <source src="${filename}" type="video/mp4"> </video>\n\nTexts generated from [${base}.srt](${base}.srt). Mark the sentences to keep for autocut.\n\n`
+  const mdHeader = `- [x] <-- Mark if you are done editing.\n\n<video controls="true" allowfullscreen="true"> <source src="${filename}" type="video/mp4"> </video>\n\nTexts generated from [${base}.srt](${base}.srt).Mark the sentences to keep for autocut.\nThe format is [subtitle_index,duration_in_second] subtitle context.\n\n`
   const mdBody = lines.map((l) => {
-    const prefix = keepSet.has(l.index)
-      ? `[${l.index},${l.duration.toFixed(2)}]`
-      : `~~[${l.index},${l.duration.toFixed(2)}]~~`
-    return `${prefix} ${l.text}`
-  }).join("\n\n")
+    const sec = Math.floor(l.start)
+    const mm = String(Math.floor(sec / 60)).padStart(2, "0")
+    const ss = String(sec % 60).padStart(2, "0")
+    const tag = `[${l.index},${mm}:${ss}]`.padEnd(11, " ")
+    const mark = keepSet.has(l.index) ? "x" : " "
+    return `- [${mark}] ${tag} ${l.text}`
+  }).join("\n")
 
   await fs.writeFile(mdPath, mdHeader + mdBody, "utf-8")
 
