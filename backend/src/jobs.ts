@@ -320,6 +320,8 @@ export async function importFromSynology(_relPath: string): Promise<JobStatus> {
   throw new Error("import 불필요: 파일은 이미 Synology 프로젝트 폴더에 있습니다")
 }
 
-export function resolveAbsolute(relPath: string): string {
-  return path.join(PROJECTS_ROOT, relPath)
+export async function resolveAbsolute(relPath: string): Promise<string> {
+  const cfg = await loadConfig()
+  if (!cfg.activeProject) throw new Error("활성 프로젝트 미설정")
+  return path.join(PROJECTS_ROOT, cfg.activeProject, relPath)
 }

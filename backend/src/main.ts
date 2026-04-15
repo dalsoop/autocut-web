@@ -49,9 +49,14 @@ app.get("/api/subtitle/*", async (req, res) => {
   }
 })
 
-app.get("/api/media/*", (req, res) => {
-  const rel = decodeURIComponent((req.params as any)[0])
-  res.sendFile(resolveAbsolute(rel))
+app.get("/api/media/*", async (req, res) => {
+  try {
+    const rel = decodeURIComponent((req.params as any)[0])
+    const abs = await resolveAbsolute(rel)
+    res.sendFile(abs)
+  } catch (e: any) {
+    res.status(400).json({ error: e.message })
+  }
 })
 
 app.get("/api/synology", async (req, res) => {
@@ -67,7 +72,7 @@ app.get("/api/synology", async (req, res) => {
 app.delete("/api/media/*", async (req, res) => {
   try {
     const rel = decodeURIComponent((req.params as any)[0])
-    const abs = resolveAbsolute(rel)
+    const abs = await resolveAbsolute(rel)
     await fs.unlink(abs).catch(() => {})
     await fs.unlink(abs + ".json").catch(() => {})
     res.json({ ok: true })
