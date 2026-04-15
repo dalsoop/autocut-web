@@ -176,6 +176,24 @@ async function resolveInput(relPath: string): Promise<string> {
 }
 
 export async function transcribe(filename: string, whisperModel?: string, lang?: string, engine?: "whisper" | "qwen3") {
+  // 큐에 등록: job은 즉시 반환(queued), 실제 spawn은 직렬
+  const job = makeJob("transcribe", filename)
+  job.status = "queued"
+  job.progress = 0
+  transcribeQueue = transcribeQueue.then(() =>
+    runTranscribe(job, filename, whisperModel, lang, engine).catch(e => {
+      job.status = "failed"
+      job.message = String(e?.message || e)
+      job.finishedAt = new Date().toISOString()
+    })
+  )
+  return job
+}
+
+async function runTranscribe(
+  job: JobStatus, filename: string,
+  whisperModel?: string, lang?: string, engine?: "whisper" | "qwen3"
+): Promise<void> {
   const cfg = await loadConfig()
   engine = engine || cfg.defaultEngine
   lang = lang || cfg.defaultLang
@@ -202,7 +220,6 @@ export async function transcribe(filename: string, whisperModel?: string, lang?:
   const filepath = await resolveInput(filename)
   await fs.access(filepath).catch(() => { throw new Error(`not found: ${filename}`) })
 
-  const job = makeJob("transcribe", filename)
   job.status = "running"
   job.progress = 0
   const _jobId = job.id
@@ -239,35 +256,36 @@ export async function transcribe(filename: string, whisperModel?: string, lang?:
   }
   p.stdout.on("data", handle)
   p.stderr.on("data", handle)
-  p.on("close", async (code) => {
-    jobProcesses.delete(_jobId)
-    if (job.status === "failed") return  // 이미 취소 처리됨
-    job.finishedAt = new Date().toISOString()
-    if (code === 0) {
-      job.status = "done"
-      job.progress = 100
-      const base = filepath.replace(/\.[^.]+$/, "")
-      job.outputs = []
-      for (const ext of [".srt", ".md"]) {
-        if (await fs.access(base + ext).then(() => true).catch(() => false)) {
-          job.outputs.push(path.basename(base + ext))
+  await new Promise<void>((resolve) => {
+    p.on("close", async (code) => {
+      jobProcesses.delete(_jobId)
+      if (job.status === "failed") { resolve(); return }
+      job.finishedAt = new Date().toISOString()
+      if (code === 0) {
+        job.status = "done"
+        job.progress = 100
+        const base = filepath.replace(/\.[^.]+$/, "")
+        job.outputs = []
+        for (const ext of [".srt", ".md"]) {
+          if (await fs.access(base + ext).then(() => true).catch(() => false)) {
+            job.outputs.push(path.basename(base + ext))
+          }
         }
+        const meta = {
+          engine, lang,
+          whisperModel: engine === "whisper" ? whisperModel : undefined,
+          qwen3Device: engine === "qwen3" ? cfg.qwen3Device : undefined,
+          createdAt: job.finishedAt,
+        }
+        await fs.writeFile(base + ".srt.meta.json",
+          JSON.stringify(meta, null, 2), "utf-8").catch(() => {})
+      } else {
+        job.status = "failed"
+        job.message = `exit ${code}: ${job.message}`
       }
-      // SRT 메타 사이드카: 어떤 엔진/모델/언어로 만들어졌는지 기록
-      const meta = {
-        engine, lang,
-        whisperModel: engine === "whisper" ? whisperModel : undefined,
-        qwen3Device: engine === "qwen3" ? cfg.qwen3Device : undefined,
-        createdAt: job.finishedAt,
-      }
-      await fs.writeFile(base + ".srt.meta.json",
-        JSON.stringify(meta, null, 2), "utf-8").catch(() => {})
-    } else {
-      job.status = "failed"
-      job.message = `exit ${code}: ${job.message}`
-    }
+      resolve()
+    })
   })
-  return job
 }
 
 async function parseSrt(srtPath: string): Promise<SubtitleLine[]> {
@@ -311,49 +329,78 @@ export async function writeSrt(srtPath: string, lines: SubtitleLine[]) {
   await fs.writeFile(srtPath, out, "utf-8")
 }
 
-/** 자막 라인 편집 (텍스트만 변경, 타임스탬프 유지) */
-export async function editLines(filename: string, edits: { index: number; text: string }[]) {
-  const filepath = await resolveInput(filename)
-  const base = filepath.replace(/\.[^.]+$/, "")
+async function loadWithKept(base: string): Promise<SubtitleLine[]> {
   const lines = await parseSrt(base + ".srt")
-  const byIdx = new Map(lines.map(l => [l.index, l]))
-  for (const e of edits) {
-    const l = byIdx.get(e.index)
-    if (l) l.text = e.text
+  const mdPath = base + ".md"
+  if (await fs.access(mdPath).then(() => true).catch(() => false)) {
+    const kept = await parseMd(mdPath)
+    if (kept.size > 0) for (const l of lines) l.kept = kept.has(l.index)
   }
-  await writeSrt(base + ".srt", lines)
   return lines
 }
 
-/** 라인 split: 중간 시점에서 둘로 나눔 */
+/** MD 재작성 — 현재 kept 상태 보존 */
+async function writeMd(base: string, videoName: string, lines: SubtitleLine[]) {
+  const mdPath = base + ".md"
+  const fileBase = path.basename(base)
+  const header = `- [x] <-- Mark if you are done editing.\n\n<video controls="true" allowfullscreen="true"> <source src="${videoName}" type="video/mp4"> </video>\n\nTexts generated from [${fileBase}.srt](${fileBase}.srt).\nThe format is [subtitle_index,duration_in_second] subtitle context.\n\n`
+  const body = lines.map(l => {
+    const sec = Math.floor(l.start)
+    const mm = String(Math.floor(sec / 60)).padStart(2, "0")
+    const ss = String(sec % 60).padStart(2, "0")
+    const tag = `[${l.index},${mm}:${ss}]`.padEnd(11, " ")
+    return `- [${l.kept ? "x" : " "}] ${tag} ${l.text}`
+  }).join("\n")
+  await fs.writeFile(mdPath, header + body, "utf-8")
+}
+
+/** 자막 라인 편집 (텍스트 변경) — kept 상태 보존 */
+export async function editLines(filename: string, edits: { index: number; text: string; kept?: boolean }[]) {
+  const filepath = await resolveInput(filename)
+  const base = filepath.replace(/\.[^.]+$/, "")
+  const lines = await loadWithKept(base)
+  const byIdx = new Map(lines.map(l => [l.index, l]))
+  for (const e of edits) {
+    const l = byIdx.get(e.index)
+    if (l) {
+      l.text = e.text
+      if (typeof e.kept === "boolean") l.kept = e.kept
+    }
+  }
+  await writeSrt(base + ".srt", lines)
+  await writeMd(base, path.basename(filepath), lines)
+  return lines
+}
+
+/** 라인 split — kept 상속 */
 export async function splitLine(filename: string, index: number, splitAtSec?: number) {
   const filepath = await resolveInput(filename)
   const base = filepath.replace(/\.[^.]+$/, "")
-  const lines = await parseSrt(base + ".srt")
+  const lines = await loadWithKept(base)
   const i = lines.findIndex(l => l.index === index)
   if (i < 0) throw new Error("line not found")
   const l = lines[i]
   const mid = splitAtSec ?? (l.start + l.end) / 2
   const halfLen = Math.floor(l.text.length / 2)
-  const first = { ...l, end: mid, text: l.text.slice(0, halfLen).trim() }
+  const first = { ...l, end: mid, text: l.text.slice(0, halfLen).trim(), duration: +(mid - l.start).toFixed(2) }
   const second = {
     ...l, index: 0, start: mid,
     text: l.text.slice(halfLen).trim(),
     duration: +(l.end - mid).toFixed(2),
+    kept: l.kept,
   }
-  first.duration = +(mid - l.start).toFixed(2)
   lines.splice(i, 1, first, second)
-  // 인덱스 재부여
   lines.forEach((x, k) => x.index = k + 1)
   await writeSrt(base + ".srt", lines)
+  await writeMd(base, path.basename(filepath), lines)
   return lines
 }
 
-/** 라인 merge: 다음 라인과 합침 */
+/** 라인 merge — kept OR */
 export async function mergeNext(filename: string, index: number) {
   const filepath = await resolveInput(filename)
   const base = filepath.replace(/\.[^.]+$/, "")
-  const lines = await parseSrt(base + ".srt")
+  const lines = await loadWithKept(base)
   const i = lines.findIndex(l => l.index === index)
   if (i < 0 || i + 1 >= lines.length) throw new Error("merge 불가")
   const merged = {
@@ -361,10 +408,12 @@ export async function mergeNext(filename: string, index: number) {
     end: lines[i+1].end,
     text: (lines[i].text + " " + lines[i+1].text).trim(),
     duration: +(lines[i+1].end - lines[i].start).toFixed(2),
+    kept: lines[i].kept || lines[i+1].kept,
   }
   lines.splice(i, 2, merged)
   lines.forEach((x, k) => x.index = k + 1)
   await writeSrt(base + ".srt", lines)
+  await writeMd(base, path.basename(filepath), lines)
   return lines
 }
 

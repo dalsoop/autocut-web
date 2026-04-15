@@ -510,18 +510,33 @@ createApp({
       editingText.value = l.text
       setTimeout(() => editInput.value?.focus(), 0)
     }
+    // 편집 전 모든 라인의 현재 kept 상태를 MD에 먼저 저장 (UI 상태 → 서버)
+    async function syncKeptToServer() {
+      if (!subtitle.value) return
+      const edits = subtitle.value.lines.map(l => ({ index: l.index, text: l.text, kept: l.kept }))
+      await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edits }),
+      })
+    }
     async function saveEdit(l) {
       if (editingIndex.value !== l.index) return
       const newText = editingText.value.trim()
       editingIndex.value = null
       if (newText === l.text || !newText) return
+      // 모든 라인 kept 동기화 + 편집 내용 반영
+      const edits = subtitle.value.lines.map(x => ({
+        index: x.index, kept: x.kept,
+        text: x.index === l.index ? newText : x.text,
+      }))
       await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edits: [{ index: l.index, text: newText }] }),
+        body: JSON.stringify({ edits }),
       })
       await reloadSubtitle()
     }
     async function splitAt(l) {
+      await syncKeptToServer()
       await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "split", index: l.index }),
@@ -529,6 +544,7 @@ createApp({
       await reloadSubtitle()
     }
     async function mergeWithNext(l) {
+      await syncKeptToServer()
       await fetch(`/api/subtitle/${encodePath(selected.value.name)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "merge", index: l.index }),
