@@ -26,6 +26,20 @@ import { isActivated, activate } from "./license.js"
 const app = express()
 app.use(express.json({ limit: "10mb" }))
 
+// 데모 read-only 모드 — 쓰기 API 차단 (DEMO_MODE=1)
+const DEMO_MODE = process.env.AUTOCUT_DEMO_MODE === "1"
+if (DEMO_MODE) {
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api/")) return next()
+    const writeMethods = new Set(["POST", "PATCH", "DELETE", "PUT"])
+    if (!writeMethods.has(req.method)) return next()
+    // config 쓰기 중 activeProject 전환은 허용 (데모 탐색용)
+    if (req.path === "/api/config" && req.method === "POST") return next()
+    if (req.path === "/api/license") return next()
+    res.status(403).json({ error: "demo_readonly", message: "This is a read-only demo. Full version available on CodeCanyon." })
+  })
+}
+
 // 라이선스 게이트 — activate 전에는 API 차단 (frontend + /api/license만 허용)
 app.use(async (req, res, next) => {
   if (req.path === "/api/license" || !req.path.startsWith("/api/")) return next()
@@ -34,7 +48,7 @@ app.use(async (req, res, next) => {
 })
 
 app.get("/api/license", async (_req, res) => {
-  res.json({ activated: await isActivated() })
+  res.json({ activated: await isActivated(), demoMode: DEMO_MODE })
 })
 app.post("/api/license", async (req, res) => {
   const code = req.body?.code

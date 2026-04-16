@@ -81,6 +81,9 @@
 <div id="app" class="app">
   <aside class="sidebar">
     <h1>🎬 AutoCut</h1>
+    <div v-if="demoMode" style="background:#f59e0b22;border:1px solid #f59e0b66;color:#f59e0b;padding:.4rem .6rem;border-radius:6px;font-size:.75rem;margin-bottom:.75rem">
+      📖 Read-only demo · <a href="https://codecanyon.net" target="_blank" style="color:#f59e0b;text-decoration:underline">Buy full version</a>
+    </div>
     <div style="display:flex;gap:.3rem;margin-bottom:.3rem;align-items:center">
       <label style="font-size:.75rem;color:var(--muted);flex:1">{{ t.activeProject }}</label>
       <button class="sm" @click="toggleLang" :title="t.langToggle">{{ lang.toUpperCase() }}</button>
@@ -386,6 +389,7 @@ createApp({
     const jobLogOpen = ref(null)
     const jobLogText = ref("")
     const subtitleVersion = ref(Date.now())  // 자막 변경 시 video <track> 캐시 버스팅
+    const demoMode = ref(false)
     const tree = ref(null)
     const expandedPaths = reactive(new Set())
 
@@ -490,6 +494,8 @@ createApp({
     }
     async function loadProjects() {
       projects.value = await fetch("/api/projects").then(r => r.json()).catch(() => [])
+      const lic = await fetch("/api/license").then(r => r.json()).catch(() => ({}))
+      demoMode.value = !!lic.demoMode
       const cfg = await fetch("/api/config").then(r => r.json()).catch(() => ({}))
       if (cfg.activeProject) activeProject.value = cfg.activeProject
       if (cfg.defaultEngine) {
@@ -810,7 +816,7 @@ createApp({
       jobLogOpen, jobLogText, viewJobLog, subtitleVersion,
       tree, expandedPaths, loadTree, toggleExpand,
       newProject, renameActiveProject, archiveActiveProject, renameItem,
-      lang, t, toggleLang, indentProject,
+      lang, t, toggleLang, indentProject, demoMode,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }
