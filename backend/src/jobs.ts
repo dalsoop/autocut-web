@@ -49,28 +49,40 @@ export async function saveConfig(cfg: Partial<AppConfig>) {
 export async function listPendingTranscribe(): Promise<string[]> {
   const cfg = await loadConfig()
   if (!cfg.activeProject) return []
-  const root = path.join(PROJECTS_ROOT, cfg.activeProject)
+  const root = path.join(WORKSPACE_ROOT, cfg.activeProject)
   const all = await walkVideos(root)
   return all
     .filter(f => !f.hasSubtitle && !path.basename(f.name).replace(/\.[^.]+$/, "").includes("_cut"))
     .map(f => f.name)
 }
 
+/** workspace 전체 디렉토리 트리를 얕게 훑어서 프로젝트 후보 목록 반환 */
 export async function listProjects(): Promise<string[]> {
-  const names = await fs.readdir(PROJECTS_ROOT).catch(() => [])
+  // WORKSPACE_ROOT 아래의 모든 디렉토리 (최대 2단계 깊이) 반환
+  // activeProject는 이제 상대경로 (예: "10_진행중/2411_영화", "40_아카이브/완료프로젝트/1711_온플리트")
   const out: string[] = []
-  for (const n of names) {
-    if (n.startsWith(".") || n === "@eaDir" || n === "#recycle") continue
-    const st = await fs.stat(path.join(PROJECTS_ROOT, n)).catch(() => null)
-    if (st?.isDirectory()) out.push(n)
+  async function walk(dir: string, rel: string, depth: number) {
+    if (depth > 3) return
+    const names = await fs.readdir(dir).catch(() => [])
+    for (const n of names) {
+      if (n.startsWith(".") || n === "@eaDir" || n === "#recycle" || n === "_trash" || n.endsWith("_subs")) continue
+      const abs = path.join(dir, n)
+      const st = await fs.stat(abs).catch(() => null)
+      if (!st?.isDirectory()) continue
+      const nextRel = rel ? `${rel}/${n}` : n
+      out.push(nextRel)
+      await walk(abs, nextRel, depth + 1)
+    }
   }
+  await walk(WORKSPACE_ROOT, "", 0)
   return out.sort()
 }
 
 async function getProjectDir(): Promise<string> {
   const cfg = await loadConfig()
   if (!cfg.activeProject) throw new Error("활성 프로젝트 미설정")
-  return path.join(PROJECTS_ROOT, cfg.activeProject)
+  // activeProject는 WORKSPACE_ROOT 기준 상대경로 (이제 10_진행중 강제 아님)
+  return path.join(WORKSPACE_ROOT, cfg.activeProject)
 }
 
 const jobs = new Map<string, JobStatus>()
@@ -188,7 +200,7 @@ export async function renameFile(relPath: string, newName: string): Promise<void
 export async function listTree(): Promise<any> {
   const cfg = await loadConfig()
   if (!cfg.activeProject) return { name: "", path: "", type: "dir", children: [] }
-  const root = path.join(PROJECTS_ROOT, cfg.activeProject)
+  const root = path.join(WORKSPACE_ROOT, cfg.activeProject)
   async function walk(abs: string, rel: string): Promise<any> {
     const st = await fs.stat(abs).catch(() => null)
     if (!st) return null
@@ -236,7 +248,7 @@ export async function listTree(): Promise<any> {
 export async function listFiles() {
   const cfg = await loadConfig()
   if (!cfg.activeProject) return { input: [], output: [] }
-  const root = path.join(PROJECTS_ROOT, cfg.activeProject)
+  const root = path.join(WORKSPACE_ROOT, cfg.activeProject)
   // 원본: *_cut* 아닌 것. 결과물: *_cut*.
   const all = await walkVideos(root)
   const input: FileInfo[] = []
@@ -722,7 +734,7 @@ async function runCut(job: JobStatus, filename: string, keepIndices: number[], l
           createdAt: job.finishedAt,
         }, null, 2)
       ).catch(() => {})
-      const relDir = path.relative(path.join(PROJECTS_ROOT, (await loadConfig()).activeProject), dir)
+      const relDir = path.relative(path.join(WORKSPACE_ROOT, (await loadConfig()).activeProject), dir)
       const relDst = relDir ? `${relDir}/${dstName}` : dstName
       job.status = "done"
       job.progress = 100
@@ -740,7 +752,7 @@ async function runCut(job: JobStatus, filename: string, keepIndices: number[], l
 export async function listSynology(subpath: string) {
   const norm = path.normalize(subpath).replace(/^\/+/, "")
   if (norm.startsWith("..")) throw new Error("invalid path")
-  const full = norm ? path.join(PROJECTS_ROOT, norm) : PROJECTS_ROOT
+  const full = norm ? path.join(WORKSPACE_ROOT, norm) : WORKSPACE_ROOT
   const stat = await fs.stat(full).catch(() => null)
   if (!stat) throw new Error("not found")
 
@@ -776,5 +788,5 @@ export async function importFromSynology(_relPath: string): Promise<JobStatus> {
 export async function resolveAbsolute(relPath: string): Promise<string> {
   const cfg = await loadConfig()
   if (!cfg.activeProject) throw new Error("활성 프로젝트 미설정")
-  return path.join(PROJECTS_ROOT, cfg.activeProject, relPath)
+  return path.join(WORKSPACE_ROOT, cfg.activeProject, relPath)
 }

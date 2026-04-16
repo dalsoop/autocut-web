@@ -86,15 +86,10 @@
       <button class="sm" @click="toggleLang" :title="t.langToggle">{{ lang.toUpperCase() }}</button>
       <button class="sm" @click="showSettings=true" :title="t.settings">⚙</button>
     </div>
-    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.3rem">
+    <select v-model="activeProject" @change="onProjectChange" style="width:100%;margin-bottom:.5rem">
       <option value="" disabled>{{ t.selectProject }}</option>
-      <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
+      <option v-for="p in projects" :key="p" :value="p">{{ indentProject(p) }}</option>
     </select>
-    <div style="display:flex;gap:.2rem;margin-bottom:.5rem">
-      <button class="sm" style="flex:1" @click="newProject" :title="t.newProject">＋</button>
-      <button class="sm" style="flex:1" @click="renameActiveProject" :disabled="!activeProject" :title="t.rename">✏</button>
-      <button class="sm danger" style="flex:1" @click="archiveActiveProject" :disabled="!activeProject" :title="t.archive">🗄</button>
-    </div>
     <button class="sm" style="width:100%; margin-bottom:.75rem" @click="batchTranscribe" :disabled="pendingCount===0">
       🎬 {{ t.batchTranscribe }} ({{ pendingCount }})
     </button>
@@ -431,6 +426,10 @@ createApp({
     function toggleLang() {
       lang.value = lang.value === "ko" ? "en" : "ko"
       localStorage.setItem("autocut_lang", lang.value)
+    }
+    function indentProject(p) {
+      const depth = (p.match(/\//g) || []).length
+      return "·  ".repeat(depth) + (p.split("/").pop() || p)
     }
     function encodePath(p) { return p.split("/").map(encodeURIComponent).join("/") }
     function setEditInput(el) { if (el) editInput.value = el }
@@ -811,7 +810,7 @@ createApp({
       jobLogOpen, jobLogText, viewJobLog, subtitleVersion,
       tree, expandedPaths, loadTree, toggleExpand,
       newProject, renameActiveProject, archiveActiveProject, renameItem,
-      lang, t, toggleLang,
+      lang, t, toggleLang, indentProject,
       loadSynology, clickSynology, importFile,
       jobEmoji, formatSize, formatTime, formatDuration,
     }
